@@ -1,0 +1,46 @@
+version: 2
+
+project_name: icloud-reminders
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: reminders
+    main: ./go
+    binary: reminders
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - scripts/reminders.sh
+
+# Separate archive for install script (version-independent URL)
+release:
+  extra_files:
+    - glob: scripts/install.sh
+      name_template: install.sh
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'

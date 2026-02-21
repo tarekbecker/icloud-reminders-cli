@@ -9,21 +9,49 @@ Access and manage Apple iCloud Reminders via CloudKit API. Full CRUD with hierar
 
 **Pure Go — no Python or pyicloud required.** Authentication, 2FA, session management and CloudKit API calls are all implemented natively in Go.
 
+## Quick Install (Pre-built Binary)
+
+```bash
+curl -sL https://github.com/tarekbecker/icloud-reminders-cli/releases/latest/download/install.sh | bash
+```
+
+Or manually download for your platform from [GitHub Releases](https://github.com/tarekbecker/icloud-reminders-cli/releases).
+
 ## Setup
 
-1. **Build the binary** (once):
+### Option A: Use Pre-built Binary
+
+1. **Download and extract** (example: macOS ARM64):
+   ```bash
+   curl -LO https://github.com/tarekbecker/icloud-reminders-cli/releases/latest/download/icloud-reminders_Linux_arm64.tar.gz
+   tar -xzf icloud-reminders_Linux_arm64.tar.gz
+   chmod +x reminders
+   sudo mv reminders /usr/local/bin/
+   ```
+
+### Option B: Build from Source
+
+1. **Build the binary** (requires Go):
    ```bash
    bash scripts/build.sh
    ```
 
 2. **Create credentials file** (`~/.config/icloud-reminders/credentials`):
    ```bash
+   mkdir -p ~/.config/icloud-reminders
+   cat > ~/.config/icloud-reminders/credentials << 'EOF'
    export ICLOUD_USERNAME="your@apple.id"
    export ICLOUD_PASSWORD="your-password"
+   EOF
+   chmod 600 ~/.config/icloud-reminders/credentials
    ```
 
 3. **Authenticate** (interactive — required on first run):
    ```bash
+   # If using pre-built binary
+   reminders auth
+   
+   # If built from source
    scripts/reminders.sh auth
    ```
    Enter your 2FA code when prompted. Session is saved to
