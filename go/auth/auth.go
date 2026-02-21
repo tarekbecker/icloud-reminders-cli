@@ -1,14 +1,21 @@
-// Package auth implements native iCloud authentication for CloudKit access.
+// Package auth implements native iCloud authentication for CloudKit access using SRP.
 //
-// Flow:
-//  1. Try to reuse saved session (session.json) → call accountLogin → get fresh CK URL
-//  2. If that fails, do full signin (username/password → optional 2FA → trust → accountLogin)
-//  3. Write updated session.json with cookies + tokens + CK base URL
+// Flow (based on Go-iClient):
+//  1. authStart - Initialize session with frame_id
+//  2. authFederate - Submit email only
+//  3. authInit - Get SRP salt and B from server
+//  4. authComplete - Send SRP proof (M1/M2)
+//  5. Handle 2FA if required (409 response)
+//  6. getTrust - Get session and trust tokens
+//  7. authenticateWeb - Get CK URL via accountLogin
+//  8. Save session.json with cookies + tokens + CK base URL
 package auth
 
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,16 +26,20 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/pbkdf2"
+	"icloud-reminders/srp"
 )
 
-// Apple authentication constants (from pyicloud / public Apple auth docs).
+// Apple authentication constants.
 const (
 	AuthEndpoint  = "https://idmsa.apple.com/appleauth/auth"
 	SetupEndpoint = "https://setup.icloud.com/setup/ws/1"
 	HomeEndpoint  = "https://www.icloud.com"
 
-	// WidgetKey is the public Apple OAuth client ID used by iCloud.com.
-	WidgetKey = "d39ba9916b7251055b22c7f910e2ea796ee65e98119eed3b1d46c30b3d14ce39"
+	// WidgetKey matches pyicloud and Go-iClient.
+	WidgetKey = "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d"
 )
 
 // authDomains are the Apple domains whose cookies we save/restore.
@@ -38,52 +49,6 @@ var authDomains = []string{
 	"https://www.icloud.com",
 	"https://setup.icloud.com",
 	"https://www.apple.com",
-}
-
-// httpError is an error that carries an HTTP status code.
-type httpError struct {
-	status int
-	msg    string
-}
-
-func (e httpError) Error() string   { return e.msg }
-func (e httpError) HTTPStatus() int { return e.status }
-
-// retryableHTTPStatus returns true for transient errors that should be retried.
-func retryableHTTPStatus(code int) bool {
-	switch code {
-	case 429, 500, 502, 503, 504:
-		return true
-	}
-	return false
-}
-
-// doWithRetry executes fn with exponential backoff on transient failures.
-// maxRetries is the maximum number of retry attempts.
-func doWithRetry(maxRetries int, fn func() error) error {
-	var err error
-	for i := 0; i <= maxRetries; i++ {
-		err = fn()
-		if err == nil {
-			return nil
-		}
-		// Check if it's a retryable HTTP error
-		if httpErr, ok := err.(interface{ HTTPStatus() int }); ok {
-			if !retryableHTTPStatus(httpErr.HTTPStatus()) {
-				return err
-			}
-		} else if i == maxRetries {
-			return err
-		}
-		// Exponential backoff: 1s, 2s, 4s...
-		delay := time.Duration(1<<i) * time.Second
-		if delay > 30*time.Second {
-			delay = 30 * time.Second
-		}
-		log.Printf("Retry %d/%d after %v: %v", i+1, maxRetries, delay, err)
-		time.Sleep(delay)
-	}
-	return err
 }
 
 // SessionData holds the persisted authentication state.
@@ -112,21 +77,31 @@ type Cookie struct {
 	Secure  bool   `json:"secure"`
 }
 
-// Authenticator manages iCloud authentication state.
+// Authenticator manages iCloud authentication state using SRP.
 type Authenticator struct {
-	username string
-	password string
-	jar      *cookiejar.Jar
-	client   *http.Client
-	data     SessionData
+	username  string
+	password  string
+	clientID  string
+	frameID   string
+	authAttr  string
+	sessionID string
+	scnt      string
+	authToken string
+	trustToken string
+	jar       *cookiejar.Jar
+	client    *http.Client
+	data      SessionData
 }
 
 // New creates an Authenticator for the given credentials.
 func New(username, password string) *Authenticator {
 	jar, _ := cookiejar.New(nil)
+	frameID := strings.ToLower(uuid.New().String())
 	return &Authenticator{
 		username: username,
 		password: password,
+		clientID: "auth-" + frameID,
+		frameID:  frameID,
 		jar:      jar,
 		client:   &http.Client{Jar: jar},
 	}
@@ -138,14 +113,15 @@ func New(username, password string) *Authenticator {
 // Returns the final SessionData with a valid CK base URL.
 func (a *Authenticator) EnsureSession(sessionFile string, forceReauth bool) (*SessionData, error) {
 	if !forceReauth {
-		// Try to reuse saved session by using its cookies + CK base URL directly.
-		// We probe with a lightweight CloudKit zones/list call rather than
-		// accountLogin (which requires a valid dsWebAuthToken that may not be
-		// stored in Python-bootstrapped sessions).
+		// Try to reuse saved session
 		if saved, err := loadSessionFile(sessionFile); err == nil && saved.CKBaseURL != "" {
 			log.Println("Trying saved session...")
 			a.restoreCookies(saved.Cookies)
 			a.data = *saved
+			a.sessionID = saved.SessionID
+			a.scnt = saved.Scnt
+			a.authToken = saved.SessionToken
+			a.trustToken = saved.TrustToken
 
 			// Probe: try the CK base URL directly
 			if ok := a.probeCloudKit(saved.CKBaseURL); ok {
@@ -168,12 +144,11 @@ func (a *Authenticator) EnsureSession(sessionFile string, forceReauth bool) (*Se
 		}
 	}
 
-	// Full interactive authentication
+	// Full SRP authentication
 	return a.fullAuth(sessionFile)
 }
 
-// probeCloudKit makes a lightweight test call to the CloudKit zones/list endpoint
-// to verify that the current cookie jar grants access.
+// probeCloudKit makes a lightweight test call to verify access.
 func (a *Authenticator) probeCloudKit(ckBase string) bool {
 	if ckBase == "" {
 		return false
@@ -202,178 +177,326 @@ func (a *Authenticator) probeCloudKit(ckBase string) bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-// fullAuth runs the complete signin flow interactively.
+// fullAuth runs the complete SRP signin flow.
 func (a *Authenticator) fullAuth(sessionFile string) (*SessionData, error) {
-	fmt.Fprintln(os.Stderr, "Signing in to iCloud...")
+	fmt.Fprintln(os.Stderr, "Signing in to iCloud (SRP)...")
 
-	// Reset cookie jar
+	// Reset state
 	a.jar, _ = cookiejar.New(nil)
 	a.client = &http.Client{Jar: a.jar}
 	a.data = SessionData{}
 
-	// Step 1: Sign in (with retry on transient errors)
-	var needs2FA bool
-	err := doWithRetry(3, func() error {
-		var err error
-		needs2FA, err = a.signin()
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("signin: %w", err)
+	// Step 1: Initialize auth session
+	if err := a.authStart(); err != nil {
+		return nil, fmt.Errorf("authStart: %w", err)
 	}
 
-	// Step 2: Handle 2FA if required
+	// Step 2: Submit email
+	if err := a.authFederate(); err != nil {
+		return nil, fmt.Errorf("authFederate: %w", err)
+	}
+
+	// Step 3-4: SRP handshake
+	needs2FA, err := a.srpAuth()
+	if err != nil {
+		return nil, fmt.Errorf("srpAuth: %w", err)
+	}
+
+	// Step 5: Handle 2FA if required
 	if needs2FA {
 		fmt.Fprintln(os.Stderr, "Two-factor authentication required.")
 		code := promptUser("Enter 2FA code: ")
-		if err := a.verify2FA(code); err != nil {
+		if err := a.submitTwoFactor(code); err != nil {
 			return nil, fmt.Errorf("2FA verification: %w", err)
 		}
 		fmt.Fprintln(os.Stderr, "2FA accepted.")
-
-		if err := a.trustSession(); err != nil {
-			log.Printf("Warning: session trust failed: %v", err)
-		}
 	}
 
-	// Step 3: Get webservices URL via accountLogin
+	// Step 6: Get trust tokens
+	if err := a.getTrust(); err != nil {
+		log.Printf("Warning: getTrust failed: %v", err)
+	}
+
+	// Step 7: Get webservices URL
 	ckURL, err := a.accountLogin()
 	if err != nil {
 		return nil, fmt.Errorf("accountLogin: %w", err)
 	}
 
 	a.data.CKBaseURL = ckURL
+	a.data.SessionToken = a.authToken
+	a.data.TrustToken = a.trustToken
+	a.data.SessionID = a.sessionID
+	a.data.Scnt = a.scnt
 	a.data.Cookies = a.extractCookies()
 	a.data.CreatedAt = time.Now().Format(time.RFC3339)
 
 	if err := a.saveSession(sessionFile); err != nil {
 		log.Printf("Warning: failed to save session: %v", err)
 	}
+
 	fmt.Fprintf(os.Stderr, "✅ Authenticated. CK base: %s\n", ckURL)
 	return &a.data, nil
 }
 
-// --- Internal auth steps ---
+// --- SRP Authentication Steps ---
 
-// signin POSTs credentials to the Apple auth endpoint.
-// Returns true if 2FA is required, false if already trusted.
-func (a *Authenticator) signin() (bool, error) {
+// authStart initializes the authentication session.
+func (a *Authenticator) authStart() error {
+	url := fmt.Sprintf("%s/authorize/signin?frame_id=%s&language=en_US&skVersion=7&iframeId=%s&client_id=%s&redirect_uri=https://www.icloud.com&response_type=code&response_mode=web_message&state=%s&authVersion=latest",
+		AuthEndpoint, a.clientID, a.clientID, WidgetKey, a.clientID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("authStart failed: HTTP %d", resp.StatusCode)
+	}
+
+	a.authAttr = resp.Header.Get("X-Apple-Auth-Attributes")
+	return nil
+}
+
+// authFederate submits the email address.
+func (a *Authenticator) authFederate() error {
+	body := fmt.Sprintf(`{"accountName":"%s","rememberMe":true}`, a.username)
+
+	req, err := http.NewRequest("POST", AuthEndpoint+"/federate?isRememberMeEnabled=true", strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+
+	req.Header = a.updateAuthHeaders(req.Header)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("authFederate failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// srpAuth performs the SRP handshake.
+// Returns true if 2FA is required.
+func (a *Authenticator) srpAuth() (bool, error) {
+	// Initialize SRP client
+	params := srp.GetParams(2048)
+	params.NoUserNameInX = true // Required for Apple's implementation
+
+	srpClient := srp.NewSRPClient(params, nil)
+
+	// Get salt and B from server
+	authInitResp, err := a.authInit(base64.StdEncoding.EncodeToString(srpClient.GetABytes()))
+	if err != nil {
+		return false, err
+	}
+
+	// Decode salt and B
+	salt, err := base64.StdEncoding.DecodeString(authInitResp.Salt)
+	if err != nil {
+		return false, fmt.Errorf("decode salt: %w", err)
+	}
+
+	bBytes, err := base64.StdEncoding.DecodeString(authInitResp.B)
+	if err != nil {
+		return false, fmt.Errorf("decode B: %w", err)
+	}
+
+	// Generate password key using PBKDF2
+	passHash := sha256.Sum256([]byte(a.password))
+	passKey := pbkdf2.Key(passHash[:], salt, authInitResp.Iteration, 32, sha256.New)
+
+	// Process challenge
+	srpClient.ProcessClientChanllenge([]byte(a.username), passKey, salt, bBytes)
+
+	// Complete auth
+	return a.authComplete(authInitResp.C,
+		base64.StdEncoding.EncodeToString(srpClient.M1),
+		base64.StdEncoding.EncodeToString(srpClient.M2))
+}
+
+// authInit gets the SRP salt and B from the server.
+type authInitResp struct {
+	Iteration int    `json:"iteration"`
+	Salt      string `json:"salt"`
+	Protocol  string `json:"protocol"`
+	B         string `json:"b"`
+	C         string `json:"c"`
+}
+
+func (a *Authenticator) authInit(aVal string) (*authInitResp, error) {
 	body := map[string]interface{}{
-		"accountName":  a.username,
-		"password":     a.password,
-		"rememberMe":   true,
-		"trustTokens":  []string{},
-	}
-	if a.data.TrustToken != "" {
-		body["trustTokens"] = []string{a.data.TrustToken}
+		"a":           aVal,
+		"accountName": a.username,
+		"protocols":   []string{"s2k", "s2k_fo"},
 	}
 
-	resp, err := a.authPost(AuthEndpoint+"/signin", body, nil)
+	bodyJSON, _ := json.Marshal(body)
+	req, err := http.NewRequest("POST", AuthEndpoint+"/signin/init", bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header = a.updateAuthHeaders(req.Header)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("authInit failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+
+	var result authInitResp
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode authInit response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// authComplete sends the SRP proof to the server.
+// Returns true if 2FA is required (409 response).
+func (a *Authenticator) authComplete(c, m1, m2 string) (bool, error) {
+	body := map[string]interface{}{
+		"accountName": a.username,
+		"rememberMe":  true,
+		"trustTokens": []string{},
+		"m1":          m1,
+		"c":           c,
+		"m2":          m2,
+	}
+
+	if a.trustToken != "" {
+		body["trustTokens"] = []string{a.trustToken}
+	}
+
+	bodyJSON, _ := json.Marshal(body)
+	req, err := http.NewRequest("POST", AuthEndpoint+"/signin/complete?isRememberMeEnabled=true", bytes.NewReader(bodyJSON))
+	if err != nil {
+		return false, err
+	}
+
+	req.Header = a.updateAuthHeaders(req.Header)
+
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
 
-	// Capture session data from response headers
-	a.data.SessionToken   = resp.Header.Get("X-Apple-Session-Token")
-	a.data.SessionID      = resp.Header.Get("X-Apple-ID-Session-Id")
-	a.data.Scnt           = resp.Header.Get("scnt")
-	a.data.AccountCountry = resp.Header.Get("X-Apple-ID-Account-Country")
-	if t := resp.Header.Get("X-Apple-TwoSV-Trust-Token"); t != "" {
-		a.data.TrustToken = t
-	}
+	// Capture session headers
+	a.sessionID = resp.Header.Get("X-Apple-ID-Session-Id")
+	a.scnt = resp.Header.Get("scnt")
 
 	switch resp.StatusCode {
 	case 200:
-		return false, nil // signed in, no 2FA needed
+		return false, nil // Success, no 2FA
 	case 409:
-		return true, nil // 2FA required
+		// 2FA required - capture headers from response
+		a.sessionID = resp.Header.Get("X-Apple-ID-Session-Id")
+		a.scnt = resp.Header.Get("scnt")
+		return true, nil
 	case 403:
-		return false, fmt.Errorf("invalid Apple ID or password")
+		return false, fmt.Errorf("invalid username or password")
 	case 401:
-		return false, fmt.Errorf("unauthorized (check credentials)")
+		return false, fmt.Errorf("unauthorized - check credentials")
+	case 412:
+		return false, fmt.Errorf("privacy acknowledgment required - visit https://appleid.apple.com")
 	default:
-		return false, httpError{
-			status: resp.StatusCode,
-			msg:    fmt.Sprintf("signin failed HTTP %d: %s", resp.StatusCode, truncate(string(respBody), 200)),
-		}
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("authComplete failed: HTTP %d - %s", resp.StatusCode, string(body))
 	}
 }
 
-// verify2FA submits the 6-digit code to the trusted-device verification endpoint.
-func (a *Authenticator) verify2FA(code string) error {
+// submitTwoFactor submits the 2FA code.
+func (a *Authenticator) submitTwoFactor(code string) error {
 	body := map[string]interface{}{
 		"securityCode": map[string]string{"code": strings.TrimSpace(code)},
 	}
-	extra := map[string]string{
-		"X-Apple-ID-Session-Id": a.data.SessionID,
-		"scnt":                  a.data.Scnt,
+
+	bodyJSON, _ := json.Marshal(body)
+	url := fmt.Sprintf("%s/verify/trusteddevice/securitycode", AuthEndpoint)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyJSON))
+	if err != nil {
+		return err
 	}
-	resp, err := a.authPost(AuthEndpoint+"/verify/trusteddevice/securitycode", body, extra)
+
+	req.Header = a.updateAuthHeaders(req.Header)
+	req.Header.Set("X-Apple-ID-Session-Id", a.sessionID)
+	req.Header.Set("scnt", a.scnt)
+
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != 200 && resp.StatusCode != 204 {
-		return fmt.Errorf("2FA failed HTTP %d: %s",
-			resp.StatusCode, truncate(string(respBody), 200))
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("2FA submission failed: HTTP %d - %s", resp.StatusCode, string(body))
 	}
 
-	// Refresh session token from response
-	if t := resp.Header.Get("X-Apple-Session-Token"); t != "" {
-		a.data.SessionToken = t
+	// Update scnt from response
+	if newScnt := resp.Header.Get("scnt"); newScnt != "" {
+		a.scnt = newScnt
 	}
+
 	return nil
 }
 
-// trustSession marks the session as trusted, earning a trust token for future logins.
-func (a *Authenticator) trustSession() error {
-	extra := map[string]string{
-		"X-Apple-ID-Session-Id": a.data.SessionID,
-		"scnt":                  a.data.Scnt,
+// getTrust gets the session and trust tokens.
+func (a *Authenticator) getTrust() error {
+	req, err := http.NewRequest("GET", AuthEndpoint+"/2sv/trust", nil)
+	if err != nil {
+		return err
 	}
-	resp, err := a.authGet(AuthEndpoint+"/2sv/trust", extra)
+
+	req.Header = a.updateAuthHeaders(req.Header)
+	req.Header.Set("X-Apple-ID-Session-Id", a.sessionID)
+	req.Header.Set("scnt", a.scnt)
+
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
 
-	if t := resp.Header.Get("X-Apple-TwoSV-Trust-Token"); t != "" {
-		a.data.TrustToken = t
+	if resp.StatusCode != 204 {
+		return fmt.Errorf("getTrust failed: HTTP %d", resp.StatusCode)
 	}
-	if t := resp.Header.Get("X-Apple-Session-Token"); t != "" {
-		a.data.SessionToken = t
-	}
+
+	a.authToken = resp.Header.Get("X-Apple-Session-Token")
+	a.trustToken = resp.Header.Get("X-Apple-TwoSV-Trust-Token")
+
 	return nil
 }
 
-// sessionTokenFromCookies attempts to extract a session token from
-// the cookie jar — specifically X-APPLE-DS-WEB-SESSION-TOKEN — as a
-// fallback when the token is not stored in session.json (Python-bootstrapped
-// sessions omit it).
-func (a *Authenticator) sessionTokenFromCookies() string {
-	for _, domain := range authDomains {
-		u, _ := url.Parse(domain)
-		for _, c := range a.jar.Cookies(u) {
-			if c.Name == "X-APPLE-DS-WEB-SESSION-TOKEN" {
-				return unquoteCookieValue(c.Value)
-			}
-		}
-	}
-	return ""
-}
-
-// accountLogin calls the iCloud setup endpoint to obtain webservices URLs.
-// This is called both after full auth AND when reusing a saved session.
+// accountLogin calls the iCloud setup endpoint to get webservices URLs.
 func (a *Authenticator) accountLogin() (string, error) {
-	token := a.data.SessionToken
+	token := a.authToken
 	if token == "" {
-		// Python-generated session.json may not include session_token;
-		// try to pull it from the X-APPLE-DS-WEB-SESSION-TOKEN cookie.
+		// Fallback to cookie
 		token = a.sessionTokenFromCookies()
 	}
 
@@ -381,23 +504,20 @@ func (a *Authenticator) accountLogin() (string, error) {
 		"dsWebAuthToken": token,
 		"extended_login": true,
 	}
+
 	if a.data.AccountCountry != "" {
-		body["accountCountry"] = a.data.AccountCountry
+		body["accountCountryCode"] = a.data.AccountCountry
 	}
 	if a.data.DSID != "" {
 		body["dsPrsId"] = a.data.DSID
 	}
 
-	bodyJSON, err := json.Marshal(body)
+	bodyJSON, _ := json.Marshal(body)
+	req, err := http.NewRequest("POST", SetupEndpoint+"/accountLogin", bytes.NewReader(bodyJSON))
 	if err != nil {
 		return "", err
 	}
 
-	reqURL := SetupEndpoint + "/accountLogin"
-	req, err := http.NewRequest("POST", reqURL, bytes.NewReader(bodyJSON))
-	if err != nil {
-		return "", err
-	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", HomeEndpoint)
@@ -408,11 +528,11 @@ func (a *Authenticator) accountLogin() (string, error) {
 		return "", fmt.Errorf("accountLogin request: %w", err)
 	}
 	defer resp.Body.Close()
+
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("accountLogin HTTP %d: %s",
-			resp.StatusCode, truncate(string(respBody), 200))
+		return "", fmt.Errorf("accountLogin HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]interface{}
@@ -420,14 +540,14 @@ func (a *Authenticator) accountLogin() (string, error) {
 		return "", fmt.Errorf("accountLogin JSON parse: %w", err)
 	}
 
-	// Extract DSID from dsInfo
+	// Extract DSID
 	if dsInfo, ok := result["dsInfo"].(map[string]interface{}); ok {
 		if dsid, ok := dsInfo["dsid"].(string); ok {
 			a.data.DSID = dsid
 		}
 	}
 
-	// Extract CloudKit base URL
+	// Extract CK URL
 	webservices, ok := result["webservices"].(map[string]interface{})
 	if !ok {
 		return "", fmt.Errorf("no webservices in accountLogin response")
@@ -441,65 +561,59 @@ func (a *Authenticator) accountLogin() (string, error) {
 		return "", fmt.Errorf("no url in ckdatabasews")
 	}
 
-	// Refresh session cookies after accountLogin (iCloud sets new cookies here)
-	a.data.Cookies = a.extractCookies()
 	return ckURL, nil
 }
 
-// --- HTTP helpers ---
-
-// authHeaders returns the standard Apple OAuth headers.
-func authHeaders() map[string]string {
-	return map[string]string{
-		"Accept":                           "application/json",
-		"Content-Type":                     "application/json",
-		"X-Apple-OAuth-Client-Id":          WidgetKey,
-		"X-Apple-OAuth-Client-Type":        "firstPartyAuth",
-		"X-Apple-OAuth-Redirect-URI":       HomeEndpoint,
-		"X-Apple-OAuth-Require-Grant-Code": "true",
-		"X-Apple-OAuth-Response-Mode":      "form_post",
-		"X-Apple-OAuth-Response-Type":      "code",
-		"X-Apple-Widget-Key":               WidgetKey,
-		"Origin":                           "https://idmsa.apple.com",
-		"Referer":                          "https://idmsa.apple.com/",
+// sessionTokenFromCookies extracts session token from cookie jar.
+func (a *Authenticator) sessionTokenFromCookies() string {
+	for _, domain := range authDomains {
+		u, _ := url.Parse(domain)
+		for _, c := range a.jar.Cookies(u) {
+			if c.Name == "X-APPLE-DS-WEB-SESSION-TOKEN" {
+				return unquoteCookieValue(c.Value)
+			}
+		}
 	}
+	return ""
 }
 
-func (a *Authenticator) authPost(rawURL string, body interface{}, extra map[string]string) (*http.Response, error) {
-	bodyJSON, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
+// --- HTTP Helpers ---
+
+// updateAuthHeaders sets the standard Apple OAuth headers.
+func (a *Authenticator) updateAuthHeaders(h http.Header) http.Header {
+	if a.scnt != "" {
+		h.Set("scnt", a.scnt)
 	}
-	req, err := http.NewRequest("POST", rawURL, bytes.NewReader(bodyJSON))
-	if err != nil {
-		return nil, err
+	if a.sessionID != "" {
+		h.Set("X-Apple-ID-Session-Id", a.sessionID)
 	}
-	for k, v := range authHeaders() {
-		req.Header.Set(k, v)
-	}
-	for k, v := range extra {
-		req.Header.Set(k, v)
-	}
-	return a.client.Do(req)
+
+	h.Set("X-Requested-With", "XMLHttpRequest")
+	h.Set("Content-Type", "application/json")
+	h.Set("Accept", "application/json")
+	h.Set("Referer", "https://idmsa.apple.com/")
+	h.Set("Origin", "https://idmsa.apple.com")
+	h.Set("X-Apple-Widget-Key", WidgetKey)
+	h.Set("X-Apple-I-Require-UE", "true")
+	h.Set("X-Apple-Auth-Attributes", a.authAttr)
+	h.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	h.Set("X-Apple-Mandate-Security-Upgrade", "0")
+	h.Set("X-Apple-Oauth-Client-Id", WidgetKey)
+	h.Set("X-Apple-Oauth-Client-Type", "firstPartyAuth")
+	h.Set("X-Apple-Oauth-Redirect-URI", "https://www.icloud.com")
+	h.Set("X-Apple-Oauth-Require-Grant-Code", "true")
+	h.Set("X-Apple-Oauth-Response-Mode", "web_message")
+	h.Set("X-Apple-Oauth-Response-Type", "code")
+	h.Set("X-Apple-Oauth-State", a.clientID)
+	h.Set("X-Apple-Offer-Security-Upgrade", "1")
+	h.Set("X-Apple-Frame-Id", a.clientID)
+	h.Set("X-Apple-I-FD-Client-Info", `{"U":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36","L":"en-US","Z":"GMT-04:00","V":"1.1","F":".ta44j1e3NlY5BNlY5BSs5uQ32SCVgdI.AqWJ4EKKw0fVD_DJhCizgzH_y3EjNklY_ia4WFL264HRe4FSr_JzC1zJ6rgNNlY5BNp55BNlan0Os5Apw.BS1"}`)
+
+	return h
 }
 
-func (a *Authenticator) authGet(rawURL string, extra map[string]string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range authHeaders() {
-		req.Header.Set(k, v)
-	}
-	for k, v := range extra {
-		req.Header.Set(k, v)
-	}
-	return a.client.Do(req)
-}
+// --- Cookie Helpers ---
 
-// --- Cookie helpers ---
-
-// extractCookies reads all cookies from the jar for all Apple domains.
 func (a *Authenticator) extractCookies() []Cookie {
 	seen := make(map[string]bool)
 	var result []Cookie
@@ -528,10 +642,6 @@ func (a *Authenticator) extractCookies() []Cookie {
 	return result
 }
 
-// unquoteCookieValue strips RFC 2109 outer double-quotes from a cookie value.
-// Apple sends many cookie values as quoted-strings: "v=1:t=..." — Go's
-// strict net/http parser rejects raw '"' bytes and drops the cookie entirely.
-// Stripping the outer quotes preserves the actual value.
 func unquoteCookieValue(v string) string {
 	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
 		return v[1 : len(v)-1]
@@ -539,10 +649,6 @@ func unquoteCookieValue(v string) string {
 	return v
 }
 
-// restoreCookies loads saved cookies back into the jar.
-// Cookies are set against multiple Apple/iCloud URLs so Go's jar (which
-// validates host-domain matching) forwards them correctly to subdomains
-// like p68-ckdatabasews.icloud.com and setup.icloud.com.
 func (a *Authenticator) restoreCookies(cookies []Cookie) {
 	var httpCookies []*http.Cookie
 	for _, c := range cookies {
@@ -560,8 +666,6 @@ func (a *Authenticator) restoreCookies(cookies []Cookie) {
 		})
 	}
 
-	// Set cookies against all relevant Apple domains so they're forwarded
-	// to any subdomain (setup.icloud.com, p*-ckdatabasews.icloud.com, etc.)
 	setURLs := []string{
 		"https://www.icloud.com",
 		"https://setup.icloud.com",
@@ -569,7 +673,6 @@ func (a *Authenticator) restoreCookies(cookies []Cookie) {
 		"https://appleid.apple.com",
 		"https://www.apple.com",
 	}
-	// Also add the stored CK base URL domain
 	if a.data.CKBaseURL != "" {
 		setURLs = append(setURLs, a.data.CKBaseURL)
 	}
@@ -583,9 +686,8 @@ func (a *Authenticator) restoreCookies(cookies []Cookie) {
 	}
 }
 
-// --- Session persistence ---
+// --- Session Persistence ---
 
-// saveSession writes the session data to disk.
 func (a *Authenticator) saveSession(sessionFile string) error {
 	if err := os.MkdirAll(sessionDir(sessionFile), 0700); err != nil {
 		return err
@@ -605,7 +707,6 @@ func sessionDir(sessionFile string) string {
 	return strings.Join(parts[:len(parts)-1], "/")
 }
 
-// loadSessionFile reads saved session data from disk.
 func loadSessionFile(sessionFile string) (*SessionData, error) {
 	data, err := os.ReadFile(sessionFile)
 	if err != nil {
@@ -620,7 +721,6 @@ func loadSessionFile(sessionFile string) (*SessionData, error) {
 
 // --- Misc ---
 
-// promptUser prints a prompt to stderr and reads a line from stdin.
 func promptUser(prompt string) string {
 	fmt.Fprint(os.Stderr, prompt)
 	scanner := bufio.NewScanner(os.Stdin)
@@ -630,24 +730,14 @@ func promptUser(prompt string) string {
 	return ""
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}
-
-// LoadCredentials reads ICLOUD_USERNAME / ICLOUD_PASSWORD from the credentials file
-// if not already set in the environment.
+// LoadCredentials reads ICLOUD_USERNAME / ICLOUD_PASSWORD from environment or credentials file.
 func LoadCredentials(configDir string) (username, password string, err error) {
-	// Try environment first
 	username = os.Getenv("ICLOUD_USERNAME")
 	password = os.Getenv("ICLOUD_PASSWORD")
 	if username != "" && password != "" {
 		return username, password, nil
 	}
 
-	// Try credentials file
 	credsFile := configDir + "/credentials"
 	data, ferr := os.ReadFile(credsFile)
 	if ferr != nil {
@@ -656,6 +746,7 @@ func LoadCredentials(configDir string) (username, password string, err error) {
 		}
 		return username, password, nil
 	}
+
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "export ") {
@@ -678,6 +769,7 @@ func LoadCredentials(configDir string) (username, password string, err error) {
 			}
 		}
 	}
+
 	if username == "" || password == "" {
 		return "", "", fmt.Errorf("credentials not found in env or %s", credsFile)
 	}
