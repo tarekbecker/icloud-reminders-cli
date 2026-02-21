@@ -1,0 +1,34 @@
+# Binaries
+icloud-reminders
+reminders
+*.exe
+
+# Go build artifacts
+*.o
+*.a
+*.so
+
+# Test artifacts
+*.test
+*.out
+
+# Config and cache files (user-specific)
+config/
+*.json
+session.json
+credentials
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build directory
+dist/
+build/
