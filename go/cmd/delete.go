@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -20,8 +19,7 @@ var deleteCmd = &cobra.Command{
 			return err
 		}
 		if errMsg, ok := result["error"].(string); ok {
-			fmt.Fprintf(os.Stderr, "❌ %s\n", errMsg)
-			os.Exit(1)
+			return fmt.Errorf("%s", errMsg)
 		}
 		fmt.Printf("✅ Deleted: %s\n", args[0])
 		return nil

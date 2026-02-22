@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -21,9 +20,6 @@ var addCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		title := args[0]
-		if addListName == "" {
-			return fmt.Errorf("list is required (use -l \"<list-name>\")")
-		}
 		if err := syncEngine.Sync(false); err != nil {
 			return err
 		}
@@ -32,8 +28,7 @@ var addCmd = &cobra.Command{
 			return err
 		}
 		if errMsg, ok := result["error"].(string); ok {
-			fmt.Fprintf(os.Stderr, "❌ %s\n", errMsg)
-			os.Exit(1)
+			return fmt.Errorf("%s", errMsg)
 		}
 		listStr := ""
 		if addListName != "" {
@@ -58,9 +53,6 @@ var addBatchCmd = &cobra.Command{
 	Short: "Add multiple reminders at once",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if batchListName == "" {
-			return fmt.Errorf("list is required (use -l \"<list-name>\")")
-		}
 		if err := syncEngine.Sync(false); err != nil {
 			return err
 		}
@@ -69,8 +61,7 @@ var addBatchCmd = &cobra.Command{
 			return err
 		}
 		if errMsg, ok := result["error"].(string); ok {
-			fmt.Fprintf(os.Stderr, "❌ %s\n", errMsg)
-			os.Exit(1)
+			return fmt.Errorf("%s", errMsg)
 		}
 		count := len(args)
 		if c, ok := result["created_count"].(int); ok {
@@ -97,12 +88,14 @@ var addBatchCmd = &cobra.Command{
 }
 
 func init() {
-	addCmd.Flags().StringVarP(&addListName, "list", "l", "", "List name")
+	addCmd.Flags().StringVarP(&addListName, "list", "l", "", "List name (required)")
 	addCmd.Flags().StringVarP(&addDue, "due", "d", "", "Due date (YYYY-MM-DD)")
 	addCmd.Flags().StringVarP(&addPriority, "priority", "p", "", "Priority (high, medium, low)")
 	addCmd.Flags().StringVarP(&addNotes, "notes", "n", "", "Notes")
 	addCmd.Flags().StringVar(&addParent, "parent", "", "Parent reminder ID (creates subtask)")
+	_ = addCmd.MarkFlagRequired("list")
 
-	addBatchCmd.Flags().StringVarP(&batchListName, "list", "l", "", "List name")
+	addBatchCmd.Flags().StringVarP(&batchListName, "list", "l", "", "List name (required)")
 	addBatchCmd.Flags().StringVar(&batchParent, "parent", "", "Parent reminder ID (creates subtasks)")
+	_ = addBatchCmd.MarkFlagRequired("list")
 }
