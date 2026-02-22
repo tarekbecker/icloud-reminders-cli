@@ -4,7 +4,7 @@ project_name: icloud-reminders
 
 before:
   hooks:
-    - go mod tidy
+    - cd go && go mod tidy
 
 builds:
   - id: reminders
@@ -23,7 +23,8 @@ builds:
       - -s -w -X main.version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - scripts/reminders.sh
@@ -49,7 +50,7 @@ changelog:
 
 # Homebrew Tap configuration
 # Requires GITHUB_TOKEN with repo access to the tap repository
-brews:
+homebrews:
   - name: icloud-reminders
     repository:
       owner: tarekbecker
