@@ -9,51 +9,56 @@ Access and manage Apple iCloud Reminders via CloudKit API. Full CRUD with hierar
 
 **Pure Go — no Python or pyicloud required.** Authentication, 2FA, session management and CloudKit API calls are all implemented natively in Go.
 
-## Quick Install (Pre-built Binary)
+## Installation
+
+### Homebrew (Recommended)
+
+The easiest way to install on macOS and Linux:
+
+```bash
+brew tap tarekbecker/tap
+brew install icloud-reminders
+```
+
+Upgrade to the latest version:
+```bash
+brew upgrade icloud-reminders
+```
+
+### Install Script
+
+One-line install for any platform:
 
 ```bash
 curl -sL https://github.com/tarekbecker/icloud-reminders-cli/releases/latest/download/install.sh | bash
 ```
 
-Or manually download for your platform from [GitHub Releases](https://github.com/tarekbecker/icloud-reminders-cli/releases).
+### Pre-built Binary
+
+Download manually for your platform from [GitHub Releases](https://github.com/tarekbecker/icloud-reminders-cli/releases).
+
+### Build from Source
+
+Requires Go 1.22+:
+
+```bash
+bash scripts/build.sh
+sudo cp go/reminders /usr/local/bin/
+```
 
 ## Setup
 
-### Option A: Use Pre-built Binary
-
-1. **Download and extract** (example: macOS ARM64):
-   ```bash
-   curl -LO https://github.com/tarekbecker/icloud-reminders-cli/releases/latest/download/icloud-reminders_Linux_arm64.tar.gz
-   tar -xzf icloud-reminders_Linux_arm64.tar.gz
-   chmod +x reminders
-   sudo mv reminders /usr/local/bin/
-   ```
-
-### Option B: Build from Source
-
-1. **Build the binary** (requires Go):
-   ```bash
-   bash scripts/build.sh
-   ```
-
-2. **Copy to PATH** (optional but recommended):
-   ```bash
-   sudo cp icloud-reminders /usr/local/bin/reminders
-   # Or use a different location in your PATH
-   ```
-
-3. **Authenticate** (interactive — required on first run):
+1. **Authenticate** (interactive — required on first run):
    ```bash
    reminders auth
    ```
-   You will be prompted for:
-   - Apple ID
-   - Password (hidden input)
-   - 2FA code (if required)
    
-   **Credentials are NOT stored.** Only the session token is saved to
-   `~/.config/icloud-reminders/session.json` and reused automatically.
-   When the session expires, run `reminders auth` again.
+   Credentials are resolved in this order:
+   1. `ICLOUD_USERNAME` / `ICLOUD_PASSWORD` environment variables
+   2. `~/.config/icloud-reminders/credentials` file (export KEY=value format)
+   3. Interactive prompt (fallback)
+
+2. **Session file** (`~/.config/icloud-reminders/session.json`) is created automatically and reused. Run `reminders auth` again when the session expires.
 
 ## Commands
 
@@ -169,36 +174,13 @@ go/
 
 | Issue | Solution |
 |-------|----------|
-| "not authenticated" | Run `reminders auth` and enter your Apple ID/password |
+| "not authenticated" | Run `reminders auth` |
 | "invalid Apple ID or password" | Re-run `reminders auth --force` |
 | "2FA failed" | Re-run `auth`, enter a fresh code |
 | "Missing change tag" | Run `reminders sync` |
 | "List not found" | Check name with `reminders lists` |
 | Binary not found | Run `bash scripts/build.sh` or check your PATH |
 
-## Installation
+## See Also
 
-### Homebrew (macOS/Linux)
-
-The easiest way to install on macOS and Linux:
-
-```bash
-# Add the tap (only needed once)
-brew tap tarekbecker/tap
-
-# Install
-brew install icloud-reminders
-
-# Upgrade to latest version
-brew upgrade icloud-reminders
-```
-
-### Binary Download
-
-Download pre-built binaries for your platform from the [GitHub Releases](https://github.com/tarekbecker/icloud-reminders-cli/releases) page.
-
-Or use the install script:
-
-```bash
-curl -sL https://github.com/tarekbecker/icloud-reminders-cli/releases/latest/download/install.sh | bash
-```
+- [Homebrew Tap Setup](HOMEBREW.md) — maintainer documentation
