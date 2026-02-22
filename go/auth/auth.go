@@ -117,12 +117,12 @@ func (a *Authenticator) EnsureSession(sessionFile string, forceReauth bool) (*Se
 		// Try to reuse saved session
 		if saved, err := loadSessionFile(sessionFile); err == nil && saved.CKBaseURL != "" {
 			log.Println("Trying saved session...")
-			a.restoreCookies(saved.Cookies)
-			a.data = *saved
+			a.data = *saved // must be set before restoreCookies so CKBaseURL is included
 			a.sessionID = saved.SessionID
 			a.scnt = saved.Scnt
 			a.authToken = saved.SessionToken
 			a.trustToken = saved.TrustToken
+			a.restoreCookies(saved.Cookies) // CKBaseURL is now set, so CK host is included
 
 			// Probe: try the CK base URL directly
 			if ok := a.probeCloudKit(saved.CKBaseURL); ok {
