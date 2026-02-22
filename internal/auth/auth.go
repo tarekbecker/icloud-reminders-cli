@@ -32,7 +32,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/term"
-	"icloud-reminders/srp"
+	"icloud-reminders/internal/srp"
 )
 
 // Apple authentication constants.

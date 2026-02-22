@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"icloud-reminders/auth"
-	"icloud-reminders/cache"
+	"icloud-reminders/internal/auth"
+	"icloud-reminders/internal/cache"
 )
 
 var authCmd = &cobra.Command{

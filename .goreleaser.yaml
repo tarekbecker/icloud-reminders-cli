@@ -4,12 +4,11 @@ project_name: icloud-reminders
 
 before:
   hooks:
-    - cmd: go mod tidy
-      dir: go
+    - go mod tidy
 
 builds:
   - id: reminders
-    main: ./go
+    main: ./cmd/reminders
     binary: reminders
     env:
       - CGO_ENABLED=0

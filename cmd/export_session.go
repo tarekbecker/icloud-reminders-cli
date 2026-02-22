@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"icloud-reminders/cache"
+	"icloud-reminders/internal/cache"
 )
 
 var exportSessionCmd = &cobra.Command{

@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"icloud-reminders/cache"
+	"icloud-reminders/internal/cache"
 )
 
 var importSessionCmd = &cobra.Command{

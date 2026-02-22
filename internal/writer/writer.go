@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"icloud-reminders/cache"
-	"icloud-reminders/cloudkit"
+	"icloud-reminders/internal/cache"
+	"icloud-reminders/internal/cloudkit"
 	"icloud-reminders/internal/logger"
-	"icloud-reminders/models"
-	"icloud-reminders/sync"
-	"icloud-reminders/utils"
+	"icloud-reminders/pkg/models"
+	"icloud-reminders/internal/sync"
+	"icloud-reminders/internal/utils"
 )
 
 // Writer handles creating and modifying reminders.

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"icloud-reminders/auth"
+	"icloud-reminders/internal/auth"
 	"icloud-reminders/internal/logger"
 )
 

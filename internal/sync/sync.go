@@ -4,12 +4,12 @@ package sync
 import (
 	"fmt"
 
-	"icloud-reminders/auth"
-	"icloud-reminders/cache"
-	"icloud-reminders/cloudkit"
+	"icloud-reminders/internal/auth"
+	"icloud-reminders/internal/cache"
+	"icloud-reminders/internal/cloudkit"
 	"icloud-reminders/internal/logger"
-	"icloud-reminders/models"
-	"icloud-reminders/utils"
+	"icloud-reminders/pkg/models"
+	"icloud-reminders/internal/utils"
 )
 
 // Engine handles syncing reminders with CloudKit.

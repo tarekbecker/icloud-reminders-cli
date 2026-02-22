@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"icloud-reminders/models"
+	"icloud-reminders/pkg/models"
 )
 
 var listsCmd = &cobra.Command{

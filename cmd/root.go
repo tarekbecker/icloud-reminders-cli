@@ -6,12 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"icloud-reminders/auth"
-	"icloud-reminders/cache"
-	"icloud-reminders/cloudkit"
+	"icloud-reminders/internal/auth"
+	"icloud-reminders/internal/cache"
+	"icloud-reminders/internal/cloudkit"
 	"icloud-reminders/internal/logger"
-	"icloud-reminders/sync"
-	"icloud-reminders/writer"
+	"icloud-reminders/internal/sync"
+	"icloud-reminders/internal/writer"
 )
 
 // verbosity is incremented once per -v flag: -v=1 (info), -vv=2 (debug).
