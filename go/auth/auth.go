@@ -24,6 +24,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -181,7 +182,27 @@ func (a *Authenticator) probeCloudKit(ckBase string) bool {
 func (a *Authenticator) fullAuth(sessionFile string) (*SessionData, error) {
 	fmt.Fprintln(os.Stderr, "Signing in to iCloud (SRP)...")
 
-	// Get credentials interactively if not provided
+	// 1. Environment variables (set by credentials file or the caller)
+	if a.username == "" {
+		a.username = os.Getenv("ICLOUD_USERNAME")
+	}
+	if a.password == "" {
+		a.password = os.Getenv("ICLOUD_PASSWORD")
+	}
+
+	// 2. Credentials file (~/.config/icloud-reminders/credentials)
+	if a.username == "" || a.password == "" {
+		if user, pass, err := loadCredentialsFile(); err == nil {
+			if a.username == "" {
+				a.username = user
+			}
+			if a.password == "" {
+				a.password = pass
+			}
+		}
+	}
+
+	// 3. Interactive prompt (fallback)
 	if a.username == "" {
 		a.username = promptUser("Apple ID: ")
 	}
@@ -728,6 +749,36 @@ func loadSessionFile(sessionFile string) (*SessionData, error) {
 }
 
 // --- Misc ---
+
+// loadCredentialsFile reads ICLOUD_USERNAME and ICLOUD_PASSWORD from
+// ~/.config/icloud-reminders/credentials (shell export format).
+// Returns an error if the file doesn't exist or values are missing.
+func loadCredentialsFile() (username, password string, err error) {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return "", "", fmt.Errorf("HOME not set")
+	}
+	path := filepath.Join(home, ".config", "icloud-reminders", "credentials")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		// Support: export ICLOUD_USERNAME="value"  or  ICLOUD_USERNAME=value
+		line = strings.TrimPrefix(line, "export ")
+		if strings.HasPrefix(line, "ICLOUD_USERNAME=") {
+			username = strings.Trim(strings.TrimPrefix(line, "ICLOUD_USERNAME="), `"'`)
+		}
+		if strings.HasPrefix(line, "ICLOUD_PASSWORD=") {
+			password = strings.Trim(strings.TrimPrefix(line, "ICLOUD_PASSWORD="), `"'`)
+		}
+	}
+	if username == "" || password == "" {
+		return "", "", fmt.Errorf("credentials not found in %s", path)
+	}
+	return username, password, nil
+}
 
 func promptUser(prompt string) string {
 	fmt.Fprint(os.Stderr, prompt)

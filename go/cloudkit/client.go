@@ -4,6 +4,7 @@ package cloudkit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,22 @@ import (
 
 	"icloud-reminders/auth"
 )
+
+// APIError represents a non-2xx HTTP error from the CloudKit API.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Body)
+}
+
+// Is503 reports whether err is a 503 APIError.
+func Is503(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == 503
+}
 
 const (
 	Container = "com.apple.reminders"
@@ -128,7 +145,7 @@ func (c *Client) post(path string, body interface{}) (map[string]interface{}, er
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, truncate(string(respBody), 500))
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: truncate(string(respBody), 500)}
 	}
 
 	var result map[string]interface{}

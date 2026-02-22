@@ -4,7 +4,9 @@ package sync
 import (
 	"fmt"
 	"log"
+	"os"
 
+	"icloud-reminders/auth"
 	"icloud-reminders/cache"
 	"icloud-reminders/cloudkit"
 	"icloud-reminders/models"
@@ -13,20 +15,50 @@ import (
 
 // Engine handles syncing reminders with CloudKit.
 type Engine struct {
-	CK    *cloudkit.Client
-	Cache *cache.Cache
+	CK          *cloudkit.Client
+	Cache       *cache.Cache
+	sessionFile string // used for 503 re-auth
 }
 
 // New creates a new sync engine.
-func New(ck *cloudkit.Client) *Engine {
+func New(ck *cloudkit.Client, sessionFile string) *Engine {
 	return &Engine{
-		CK:    ck,
-		Cache: cache.Load(),
+		CK:          ck,
+		Cache:       cache.Load(),
+		sessionFile: sessionFile,
 	}
 }
 
 // Sync performs a delta or full sync from CloudKit.
+// On a 503 response it attempts a forced full re-auth once and retries.
+// If the 503 persists after re-auth, the call aborts — this indicates an
+// implementation bug rather than a transient server error.
 func (e *Engine) Sync(force bool) error {
+	err := e.doSync(force)
+	if err == nil {
+		return nil
+	}
+	if cloudkit.Is503(err) {
+		fmt.Fprintln(os.Stderr, "⚠️  Got 503 from iCloud — attempting forced re-auth...")
+		sess, reAuthErr := auth.New().EnsureSession(e.sessionFile, true)
+		if reAuthErr != nil {
+			return fmt.Errorf("re-auth failed after 503: %w", reAuthErr)
+		}
+		newCK, ckErr := cloudkit.NewFromSession(sess)
+		if ckErr != nil {
+			return fmt.Errorf("cloudkit reinit after re-auth: %w", ckErr)
+		}
+		e.CK = newCK
+		if retryErr := e.doSync(force); retryErr != nil {
+			return fmt.Errorf("503 persists after re-auth (implementation bug): %w", retryErr)
+		}
+		return nil
+	}
+	return err
+}
+
+// doSync is the inner sync implementation used by Sync.
+func (e *Engine) doSync(force bool) error {
 	if force {
 		e.Cache = cache.NewCache()
 		log.Println("Full sync (forced)...")

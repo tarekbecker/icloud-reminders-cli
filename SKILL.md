@@ -42,7 +42,7 @@ Or manually download for your platform from [GitHub Releases](https://github.com
    # Or use a different location in your PATH
    ```
 
-3. **Create credentials file** (`~/.config/icloud-reminders/credentials`):
+3. **Create credentials file** (`~/.config/icloud-reminders/credentials`) — optional but recommended for non-interactive use:
    ```bash
    mkdir -p ~/.config/icloud-reminders
    cat > ~/.config/icloud-reminders/credentials << 'EOF'
@@ -51,16 +51,20 @@ Or manually download for your platform from [GitHub Releases](https://github.com
    EOF
    chmod 600 ~/.config/icloud-reminders/credentials
    ```
+   Credentials are resolved in this order on re-auth:
+   1. `ICLOUD_USERNAME` / `ICLOUD_PASSWORD` env vars
+   2. `~/.config/icloud-reminders/credentials` file
+   3. Interactive prompt (fallback)
 
-4. **Authenticate** (interactive — required on first run):
+4. **Authenticate** (interactive — required on first run or after trust token expiry ~30 days):
    ```bash
    reminders auth
    ```
    Enter your 2FA code when prompted. Session is saved to
    `~/.config/icloud-reminders/session.json` and reused automatically.
-   Re-authentication is only needed when the session expires.
+   If credentials are stored, re-auth after session expiry requires no interaction (no 2FA if trust token still valid).
 
-> **Development:** Use `scripts/reminders.sh` from the repo root — it auto-builds the binary if missing and loads credentials automatically.
+> **Development:** Use `scripts/reminders.sh` from the repo root — it auto-builds the binary if missing and loads credentials from the credentials file automatically.
 
 ## Commands
 

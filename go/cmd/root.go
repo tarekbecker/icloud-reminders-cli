@@ -51,7 +51,7 @@ var RootCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("cloudkit init: %w", err)
 		}
-		syncEngine = sync.New(ckClient)
+		syncEngine = sync.New(ckClient, cache.SessionFile)
 		w = writer.New(ckClient, syncEngine)
 		return nil
 	},
