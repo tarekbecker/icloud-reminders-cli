@@ -103,8 +103,19 @@ func (w *Writer) AddReminder(title, listName, dueDate, priority, notes, parentID
 	}
 	ts := time.Now().UnixMilli()
 	rd.ModifiedTS = &ts
+	// Extract recordChangeTag from response so the reminder can be
+	// immediately completed/deleted without requiring a sync first.
+	if records, ok := result["records"].([]interface{}); ok && len(records) > 0 {
+		if rec, ok := records[0].(map[string]interface{}); ok {
+			if ct, ok := rec["recordChangeTag"].(string); ok && ct != "" {
+				rd.ChangeTag = &ct
+			}
+		}
+	}
 	w.Sync.Cache.Reminders[recordName] = rd
-	_ = w.Sync.Cache.Save()
+	if err := w.Sync.Cache.Save(); err != nil {
+		logger.Warnf("cache save failed: %v", err)
+	}
 
 	return result, nil
 }
@@ -181,7 +192,9 @@ func (w *Writer) AddRemindersBatch(titles []string, listName, parentID string) (
 		}
 		w.Sync.Cache.Reminders[c.recordName] = rd
 	}
-	_ = w.Sync.Cache.Save()
+	if err := w.Sync.Cache.Save(); err != nil {
+		logger.Warnf("cache save failed: %v", err)
+	}
 	var titleList []string
 	for _, c := range createdList {
 		titleList = append(titleList, c.title)
@@ -240,7 +253,9 @@ func (w *Writer) CompleteReminder(reminderID string) (map[string]interface{}, er
 				}
 			}
 		}
-		_ = w.Sync.Cache.Save()
+		if err := w.Sync.Cache.Save(); err != nil {
+		logger.Warnf("cache save failed: %v", err)
+	}
 		logger.Infof("Completed reminder: %q (%s)", rd.Title, reminderID)
 	}
 	return result, nil
@@ -282,7 +297,9 @@ func (w *Writer) DeleteReminder(reminderID string) (map[string]interface{}, erro
 	}
 	if _, hasErr := result["error"]; !hasErr {
 		delete(w.Sync.Cache.Reminders, fullID)
-		_ = w.Sync.Cache.Save()
+		if err := w.Sync.Cache.Save(); err != nil {
+		logger.Warnf("cache save failed: %v", err)
+	}
 		logger.Infof("Deleted reminder: %q (%s)", title, reminderID)
 	}
 	return result, nil
