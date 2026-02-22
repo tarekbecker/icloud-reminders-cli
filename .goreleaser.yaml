@@ -4,7 +4,8 @@ project_name: icloud-reminders
 
 before:
   hooks:
-    - cd go && go mod tidy
+    - cmd: go mod tidy
+      dir: go
 
 builds:
   - id: reminders
