@@ -10,14 +10,17 @@ import (
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Authenticate with iCloud (interactive — required on first run or session expiry)",
+	Short: "Authenticate with iCloud (required on first run or session expiry)",
 	Long: `Authenticate with iCloud using your Apple ID and password.
 
-On first run or when your session has expired, this command will:
-  1. Prompt for Apple ID and password (not stored, only used for authentication)
-  2. Perform SRP authentication with Apple servers
-  3. Prompt for a 2FA code if required
-  4. Save the session to ~/.config/icloud-reminders/session.json
+Credentials are resolved in this order:
+  1. ICLOUD_USERNAME / ICLOUD_PASSWORD environment variables
+  2. ~/.config/icloud-reminders/credentials file (export KEY=value format)
+  3. Interactive prompt (fallback)
+
+The password is used for SRP authentication (never sent to servers in plain text)
+and is not persisted. On success, a session token is saved to:
+  ~/.config/icloud-reminders/session.json
 
 Subsequent commands reuse the saved session automatically.
 Use --force to re-authenticate even if a valid session exists.
