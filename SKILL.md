@@ -1,6 +1,17 @@
 ---
 name: icloud-reminders
 description: Manage Apple iCloud Reminders via CloudKit API. Use for listing, adding, completing, deleting reminders, managing lists, and hierarchical subtasks. Works with 2FA-protected accounts via cached sessions.
+version: 0.1.0
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - reminders
+      config:
+        - ~/.config/icloud-reminders/credentials
+        - ~/.config/icloud-reminders/session.json
+    emoji: "✅"
+    homepage: https://github.com/tarekbecker/icloud-reminders-cli
 ---
 
 # iCloud Reminders (Go)
