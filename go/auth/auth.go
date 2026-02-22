@@ -25,10 +25,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/pbkdf2"
+	"golang.org/x/term"
 	"icloud-reminders/srp"
 )
 
@@ -79,27 +81,25 @@ type Cookie struct {
 
 // Authenticator manages iCloud authentication state using SRP.
 type Authenticator struct {
-	username  string
-	password  string
-	clientID  string
-	frameID   string
-	authAttr  string
-	sessionID string
-	scnt      string
-	authToken string
+	username   string
+	password   string
+	clientID   string
+	frameID    string
+	authAttr   string
+	sessionID  string
+	scnt       string
+	authToken  string
 	trustToken string
-	jar       *cookiejar.Jar
-	client    *http.Client
-	data      SessionData
+	jar        *cookiejar.Jar
+	client     *http.Client
+	data       SessionData
 }
 
-// New creates an Authenticator for the given credentials.
-func New(username, password string) *Authenticator {
+// New creates an Authenticator without credentials (interactive mode).
+func New() *Authenticator {
 	jar, _ := cookiejar.New(nil)
 	frameID := strings.ToLower(uuid.New().String())
 	return &Authenticator{
-		username: username,
-		password: password,
 		clientID: "auth-" + frameID,
 		frameID:  frameID,
 		jar:      jar,
@@ -180,6 +180,14 @@ func (a *Authenticator) probeCloudKit(ckBase string) bool {
 // fullAuth runs the complete SRP signin flow.
 func (a *Authenticator) fullAuth(sessionFile string) (*SessionData, error) {
 	fmt.Fprintln(os.Stderr, "Signing in to iCloud (SRP)...")
+
+	// Get credentials interactively if not provided
+	if a.username == "" {
+		a.username = promptUser("Apple ID: ")
+	}
+	if a.password == "" {
+		a.password = promptUserPassword("Password: ")
+	}
 
 	// Reset state
 	a.jar, _ = cookiejar.New(nil)
@@ -730,48 +738,13 @@ func promptUser(prompt string) string {
 	return ""
 }
 
-// LoadCredentials reads ICLOUD_USERNAME / ICLOUD_PASSWORD from environment or credentials file.
-func LoadCredentials(configDir string) (username, password string, err error) {
-	username = os.Getenv("ICLOUD_USERNAME")
-	password = os.Getenv("ICLOUD_PASSWORD")
-	if username != "" && password != "" {
-		return username, password, nil
+// promptUserPassword reads a password from stdin without echoing.
+func promptUserPassword(prompt string) string {
+	fmt.Fprint(os.Stderr, prompt)
+	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return ""
 	}
-
-	credsFile := configDir + "/credentials"
-	data, ferr := os.ReadFile(credsFile)
-	if ferr != nil {
-		if username == "" || password == "" {
-			return "", "", fmt.Errorf("ICLOUD_USERNAME / ICLOUD_PASSWORD not set and %s not found", credsFile)
-		}
-		return username, password, nil
-	}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "export ") {
-			line = line[7:]
-		}
-		k, v, found := strings.Cut(line, "=")
-		if !found {
-			continue
-		}
-		k = strings.TrimSpace(k)
-		v = strings.Trim(strings.TrimSpace(v), `"'`)
-		switch k {
-		case "ICLOUD_USERNAME":
-			if username == "" {
-				username = v
-			}
-		case "ICLOUD_PASSWORD":
-			if password == "" {
-				password = v
-			}
-		}
-	}
-
-	if username == "" || password == "" {
-		return "", "", fmt.Errorf("credentials not found in env or %s", credsFile)
-	}
-	return username, password, nil
+	fmt.Fprintln(os.Stderr)
+	return strings.TrimSpace(string(bytePassword))
 }

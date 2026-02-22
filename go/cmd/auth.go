@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"icloud-reminders/auth"
+	"icloud-reminders/cache"
 )
 
 var authCmd = &cobra.Command{
@@ -12,15 +14,19 @@ var authCmd = &cobra.Command{
 	Long: `Authenticate with iCloud using your Apple ID and password.
 
 On first run or when your session has expired, this command will:
-  1. Sign in with ICLOUD_USERNAME / ICLOUD_PASSWORD from credentials file
-  2. Prompt for a 2FA code if required
-  3. Save the session to ~/.config/icloud-reminders/session.json
+  1. Prompt for Apple ID and password (not stored, only used for authentication)
+  2. Perform SRP authentication with Apple servers
+  3. Prompt for a 2FA code if required
+  4. Save the session to ~/.config/icloud-reminders/session.json
 
 Subsequent commands reuse the saved session automatically.
-Use --force to re-authenticate even if a valid session exists.`,
+Use --force to re-authenticate even if a valid session exists.
+
+When the session expires, run 'reminders auth' again to re-authenticate.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
-		sess, err := loadSession(force)
+		a := auth.New()
+		sess, err := a.EnsureSession(cache.SessionFile, force)
 		if err != nil {
 			return err
 		}

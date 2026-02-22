@@ -42,25 +42,18 @@ Or manually download for your platform from [GitHub Releases](https://github.com
    # Or use a different location in your PATH
    ```
 
-3. **Create credentials file** (`~/.config/icloud-reminders/credentials`):
-   ```bash
-   mkdir -p ~/.config/icloud-reminders
-   cat > ~/.config/icloud-reminders/credentials << 'EOF'
-   export ICLOUD_USERNAME="your@apple.id"
-   export ICLOUD_PASSWORD="your-password"
-   EOF
-   chmod 600 ~/.config/icloud-reminders/credentials
-   ```
-
-4. **Authenticate** (interactive — required on first run):
+3. **Authenticate** (interactive — required on first run):
    ```bash
    reminders auth
    ```
-   Enter your 2FA code when prompted. Session is saved to
+   You will be prompted for:
+   - Apple ID
+   - Password (hidden input)
+   - 2FA code (if required)
+   
+   **Credentials are NOT stored.** Only the session token is saved to
    `~/.config/icloud-reminders/session.json` and reused automatically.
-   Re-authentication is only needed when the session expires.
-
-> **Development:** Use `scripts/reminders.sh` from the repo root — it auto-builds the binary if missing and loads credentials automatically.
+   When the session expires, run `reminders auth` again.
 
 ## Commands
 
@@ -176,8 +169,8 @@ go/
 
 | Issue | Solution |
 |-------|----------|
-| "not authenticated" | Run `reminders auth` |
-| "invalid Apple ID or password" | Check credentials file |
+| "not authenticated" | Run `reminders auth` and enter your Apple ID/password |
+| "invalid Apple ID or password" | Re-run `reminders auth --force` |
 | "2FA failed" | Re-run `auth`, enter a fresh code |
 | "Missing change tag" | Run `reminders sync` |
 | "List not found" | Check name with `reminders lists` |

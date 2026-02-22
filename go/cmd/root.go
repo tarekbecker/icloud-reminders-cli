@@ -57,13 +57,10 @@ var RootCmd = &cobra.Command{
 	},
 }
 
-// loadSession resolves credentials and ensures a valid CloudKit session.
+// loadSession ensures a valid CloudKit session.
+// If no valid session exists, returns error prompting for auth.
 func loadSession(forceReauth bool) (*auth.SessionData, error) {
-	username, password, err := auth.LoadCredentials(cache.ConfigDir)
-	if err != nil {
-		return nil, err
-	}
-	a := auth.New(username, password)
+	a := auth.New()
 	return a.EnsureSession(cache.SessionFile, forceReauth)
 }
 

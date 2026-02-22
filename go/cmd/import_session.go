@@ -80,7 +80,7 @@ var importSessionCmd = &cobra.Command{
 			fmt.Printf("   - %s\n", name)
 		}
 		fmt.Println()
-		fmt.Println("ℹ️  You may still need to set ICLOUD_USERNAME in credentials file.")
+		fmt.Println("ℹ️  Session imported. Run 'reminders auth --force' if re-authentication is needed.")
 		return nil
 	},
 }

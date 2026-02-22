@@ -36,7 +36,13 @@ Or manually download for your platform from [GitHub Releases](https://github.com
    bash scripts/build.sh
    ```
 
-2. **Create credentials file** (`~/.config/icloud-reminders/credentials`):
+2. **Copy to PATH** (optional but recommended):
+   ```bash
+   sudo cp icloud-reminders /usr/local/bin/reminders
+   # Or use a different location in your PATH
+   ```
+
+3. **Create credentials file** (`~/.config/icloud-reminders/credentials`):
    ```bash
    mkdir -p ~/.config/icloud-reminders
    cat > ~/.config/icloud-reminders/credentials << 'EOF'
@@ -46,72 +52,70 @@ Or manually download for your platform from [GitHub Releases](https://github.com
    chmod 600 ~/.config/icloud-reminders/credentials
    ```
 
-3. **Authenticate** (interactive — required on first run):
+4. **Authenticate** (interactive — required on first run):
    ```bash
-   # If using pre-built binary
    reminders auth
-   
-   # If built from source
-   scripts/reminders.sh auth
    ```
    Enter your 2FA code when prompted. Session is saved to
    `~/.config/icloud-reminders/session.json` and reused automatically.
    Re-authentication is only needed when the session expires.
 
+> **Development:** Use `scripts/reminders.sh` from the repo root — it auto-builds the binary if missing and loads credentials automatically.
+
 ## Commands
 
 ```bash
 # First-time setup / force re-auth
-scripts/reminders.sh auth
-scripts/reminders.sh auth --force
+reminders auth
+reminders auth --force
 
 # List all active reminders (hierarchical)
-scripts/reminders.sh list
+reminders list
 
 # Filter by list name
-scripts/reminders.sh list -l "🛒 Einkauf"
+reminders list -l "🛒 Einkauf"
 
 # Include completed
-scripts/reminders.sh list --all
+reminders list --all
 
 # Search by title
-scripts/reminders.sh search "milk"
+reminders search "milk"
 
 # Show all lists
-scripts/reminders.sh lists
+reminders lists
 
 # Add reminder
-scripts/reminders.sh add "Buy milk" -l "Einkauf"
+reminders add "Buy milk" -l "Einkauf"
 
 # Add with due date and priority
-scripts/reminders.sh add "Call mom" --due 2026-02-25 --priority high
+reminders add "Call mom" --due 2026-02-25 --priority high
 
 # Add with notes
-scripts/reminders.sh add "Buy milk" -l "Einkauf" --notes "Get the organic 2% stuff"
+reminders add "Buy milk" -l "Einkauf" --notes "Get the organic 2% stuff"
 
 # Add as subtask
-scripts/reminders.sh add "Butter" --parent ABC123
+reminders add "Butter" --parent ABC123
 
 # Add multiple at once (batch)
-scripts/reminders.sh add-batch "Butter" "Käse" "Milch" -l "Einkauf"
+reminders add-batch "Butter" "Käse" "Milch" -l "Einkauf"
 
 # Complete reminder
-scripts/reminders.sh complete abc123
+reminders complete abc123
 
 # Delete reminder
-scripts/reminders.sh delete abc123
+reminders delete abc123
 
 # Export as JSON
-scripts/reminders.sh json
+reminders json
 
 # Force full resync
-scripts/reminders.sh sync
+reminders sync
 
 # Export session cookies (share without password)
-scripts/reminders.sh export-session session.tar.gz
+reminders export-session session.tar.gz
 
 # Import session from export
-scripts/reminders.sh import-session session.tar.gz
+reminders import-session session.tar.gz
 ```
 
 ## Session Management
@@ -142,13 +146,13 @@ IDs (8-char) in parentheses — use for `complete`, `delete`, `--parent`.
 
 - **Cache:** `~/.config/icloud-reminders/ck_cache.json` (same JSON format as Python version — shared/compatible)
 - **Delta sync:** Fast incremental updates (default)
-- **Full sync:** `scripts/reminders.sh sync` — can take ~2 min for large accounts
+- **Full sync:** `reminders sync` — can take ~2 min for large accounts
 
 ## Architecture
 
 ```
 scripts/
-├── reminders.sh            # Entry point wrapper
+├── reminders.sh            # Dev wrapper (auto-builds + loads creds)
 ├── build.sh                # Build script
 └── reminders               # Compiled Go binary (generated)
 
@@ -172,9 +176,9 @@ go/
 
 | Issue | Solution |
 |-------|----------|
-| "not authenticated" | Run `scripts/reminders.sh auth` |
+| "not authenticated" | Run `reminders auth` |
 | "invalid Apple ID or password" | Check credentials file |
 | "2FA failed" | Re-run `auth`, enter a fresh code |
-| "Missing change tag" | Run `scripts/reminders.sh sync` |
-| "List not found" | Check name with `scripts/reminders.sh lists` |
-| Binary not found | Run `bash scripts/build.sh` |
+| "Missing change tag" | Run `reminders sync` |
+| "List not found" | Check name with `reminders lists` |
+| Binary not found | Run `bash scripts/build.sh` or check your PATH |
