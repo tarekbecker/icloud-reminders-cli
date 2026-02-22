@@ -3,19 +3,19 @@ package cmd
 
 import (
 	"fmt"
-	"log"
-	"os"
 
 	"github.com/spf13/cobra"
 
 	"icloud-reminders/auth"
 	"icloud-reminders/cache"
 	"icloud-reminders/cloudkit"
+	"icloud-reminders/internal/logger"
 	"icloud-reminders/sync"
 	"icloud-reminders/writer"
 )
 
-var verbose bool
+// verbosity is incremented once per -v flag: -v=1 (info), -vv=2 (debug).
+var verbosity int
 
 // shared per-invocation state (set in PersistentPreRunE)
 var (
@@ -29,11 +29,7 @@ var RootCmd = &cobra.Command{
 	Use:   "reminders",
 	Short: "iCloud Reminders CLI (CloudKit)",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if !verbose {
-			// Suppress info logs unless -v is given
-			log.SetOutput(os.Stderr)
-		}
-		log.SetFlags(0)
+		logger.SetLevel(verbosity)
 
 		// Commands that handle their own auth (or none)
 		switch cmd.Name() {
@@ -65,7 +61,8 @@ func loadSession(forceReauth bool) (*auth.SessionData, error) {
 }
 
 func init() {
-	RootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
+	// CountP increments verbosity each time -v is passed: -v=1, -vv=2
+	RootCmd.PersistentFlags().CountVarP(&verbosity, "verbose", "v", "Verbosity: -v info, -vv debug")
 
 	RootCmd.AddCommand(
 		authCmd,

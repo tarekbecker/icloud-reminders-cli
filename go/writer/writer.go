@@ -7,6 +7,7 @@ import (
 
 	"icloud-reminders/cache"
 	"icloud-reminders/cloudkit"
+	"icloud-reminders/internal/logger"
 	"icloud-reminders/models"
 	"icloud-reminders/sync"
 	"icloud-reminders/utils"
@@ -72,6 +73,7 @@ func (w *Writer) AddReminder(title, listName, dueDate, priority, notes, parentID
 		return errResult(err), nil
 	}
 
+	logger.Debugf("add: creating record %s in list %s", recordName, listID)
 	result, err := w.CK.ModifyRecords(ownerID, []map[string]interface{}{op})
 	if err != nil {
 		return errResult(err), nil
@@ -81,6 +83,7 @@ func (w *Writer) AddReminder(title, listName, dueDate, priority, notes, parentID
 		return errResult(err), nil
 	}
 
+	logger.Infof("Created reminder: %q → %s", title, listName)
 	// Update cache
 	rd := &cache.ReminderData{
 		Title:    title,
@@ -154,6 +157,7 @@ func (w *Writer) AddRemindersBatch(titles []string, listName, parentID string) (
 		createdList = append(createdList, created{recordName, title})
 	}
 
+	logger.Debugf("add-batch: creating %d records in list %s", len(ops), listID)
 	result, err := w.CK.ModifyRecords(ownerID, ops)
 	if err != nil {
 		return errResult(err), nil
@@ -162,6 +166,7 @@ func (w *Writer) AddRemindersBatch(titles []string, listName, parentID string) (
 		return errResult(err), nil
 	}
 
+	logger.Infof("Created %d reminders in %q", len(createdList), listName)
 	now := time.Now().UnixMilli()
 	for _, c := range createdList {
 		rd := &cache.ReminderData{
@@ -218,6 +223,7 @@ func (w *Writer) CompleteReminder(reminderID string) (map[string]interface{}, er
 		},
 	}
 
+	logger.Debugf("complete: updating record %s", fullID)
 	result, err := w.CK.ModifyRecords(ownerID, []map[string]interface{}{op})
 	if err != nil {
 		return errResult(err), nil
@@ -235,6 +241,7 @@ func (w *Writer) CompleteReminder(reminderID string) (map[string]interface{}, er
 			}
 		}
 		_ = w.Sync.Cache.Save()
+		logger.Infof("Completed reminder: %q (%s)", rd.Title, reminderID)
 	}
 	return result, nil
 }
@@ -264,6 +271,11 @@ func (w *Writer) DeleteReminder(reminderID string) (map[string]interface{}, erro
 		},
 	}
 
+	title := ""
+	if rd != nil {
+		title = rd.Title
+	}
+	logger.Debugf("delete: removing record %s", fullID)
 	result, err := w.CK.ModifyRecords(ownerID, []map[string]interface{}{op})
 	if err != nil {
 		return errResult(err), nil
@@ -271,6 +283,7 @@ func (w *Writer) DeleteReminder(reminderID string) (map[string]interface{}, erro
 	if _, hasErr := result["error"]; !hasErr {
 		delete(w.Sync.Cache.Reminders, fullID)
 		_ = w.Sync.Cache.Save()
+		logger.Infof("Deleted reminder: %q (%s)", title, reminderID)
 	}
 	return result, nil
 }

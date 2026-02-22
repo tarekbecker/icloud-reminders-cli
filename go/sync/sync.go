@@ -3,12 +3,11 @@ package sync
 
 import (
 	"fmt"
-	"log"
-	"os"
 
 	"icloud-reminders/auth"
 	"icloud-reminders/cache"
 	"icloud-reminders/cloudkit"
+	"icloud-reminders/internal/logger"
 	"icloud-reminders/models"
 	"icloud-reminders/utils"
 )
@@ -39,7 +38,7 @@ func (e *Engine) Sync(force bool) error {
 		return nil
 	}
 	if cloudkit.Is503(err) {
-		fmt.Fprintln(os.Stderr, "⚠️  Got 503 from iCloud — attempting forced re-auth...")
+		logger.Warn("Got 503 from iCloud — attempting forced re-auth...")
 		sess, reAuthErr := auth.New().EnsureSession(e.sessionFile, true)
 		if reAuthErr != nil {
 			return fmt.Errorf("re-auth failed after 503: %w", reAuthErr)
@@ -59,13 +58,14 @@ func (e *Engine) Sync(force bool) error {
 
 // doSync is the inner sync implementation used by Sync.
 func (e *Engine) doSync(force bool) error {
+	defer logger.Timer("sync")()
 	if force {
 		e.Cache = cache.NewCache()
-		log.Println("Full sync (forced)...")
+		logger.Info("Full sync (forced)...")
 	} else if e.Cache.SyncToken != nil && *e.Cache.SyncToken != "" {
-		log.Println("Delta sync...")
+		logger.Info("Delta sync...")
 	} else {
-		log.Println("Full sync (first run)...")
+		logger.Info("Full sync (no cache)...")
 	}
 
 	// Get owner ID
@@ -103,7 +103,7 @@ func (e *Engine) doSync(force bool) error {
 
 		total += len(records)
 		if len(records) > 0 {
-			log.Printf("  Page %d: +%d records", page, len(records))
+			logger.Debugf("  Page %d: +%d records", page, len(records))
 		}
 
 		e.processRecords(records)
@@ -116,7 +116,6 @@ func (e *Engine) doSync(force bool) error {
 		}
 	}
 
-	_ = total
 	if err := e.Cache.Save(); err != nil {
 		return fmt.Errorf("save cache: %w", err)
 	}
@@ -127,8 +126,8 @@ func (e *Engine) doSync(force bool) error {
 			active++
 		}
 	}
-	log.Printf("  Synced: %d reminders (%d active), %d lists",
-		len(e.Cache.Reminders), active, len(e.Cache.Lists))
+	logger.Infof("Synced: %d reminders (%d active), %d lists — %d records fetched",
+		len(e.Cache.Reminders), active, len(e.Cache.Lists), total)
 	return nil
 }
 

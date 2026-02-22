@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"icloud-reminders/internal/logger"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -116,7 +116,10 @@ func (a *Authenticator) EnsureSession(sessionFile string, forceReauth bool) (*Se
 	if !forceReauth {
 		// Try to reuse saved session
 		if saved, err := loadSessionFile(sessionFile); err == nil && saved.CKBaseURL != "" {
-			log.Println("Trying saved session...")
+			logger.Info("Trying saved session...")
+			if saved.CreatedAt != "" {
+				logger.Debugf("Session created at: %s", saved.CreatedAt)
+			}
 			a.data = *saved // must be set before restoreCookies so CKBaseURL is included
 			a.sessionID = saved.SessionID
 			a.scnt = saved.Scnt
@@ -125,22 +128,23 @@ func (a *Authenticator) EnsureSession(sessionFile string, forceReauth bool) (*Se
 			a.restoreCookies(saved.Cookies) // CKBaseURL is now set, so CK host is included
 
 			// Probe: try the CK base URL directly
+			logger.Debugf("Probing CloudKit: %s", saved.CKBaseURL)
 			if ok := a.probeCloudKit(saved.CKBaseURL); ok {
-				log.Println("Session reused OK.")
+				logger.Info("Session reused OK.")
 				return &a.data, nil
 			}
 
 			// Cookies stale — try accountLogin to refresh them
-			log.Println("Probing failed, trying accountLogin refresh...")
+			logger.Info("Session stale, refreshing via accountLogin...")
 			if ckURL, err := a.accountLogin(); err == nil {
 				a.data.CKBaseURL = ckURL
 				a.data.Cookies = a.extractCookies()
 				a.data.CreatedAt = time.Now().Format(time.RFC3339)
 				_ = a.saveSession(sessionFile)
-				log.Println("Session refreshed via accountLogin.")
+				logger.Infof("Session refreshed. CK host: %s", hostOf(ckURL))
 				return &a.data, nil
 			} else {
-				log.Printf("accountLogin failed (%v), doing full re-auth...", err)
+				logger.Infof("accountLogin failed (%v), doing full re-auth...", err)
 			}
 		}
 	}
@@ -181,13 +185,20 @@ func (a *Authenticator) probeCloudKit(ckBase string) bool {
 // fullAuth runs the complete SRP signin flow.
 func (a *Authenticator) fullAuth(sessionFile string) (*SessionData, error) {
 	fmt.Fprintln(os.Stderr, "Signing in to iCloud (SRP)...")
+	logger.Infof("Authenticating as: %s", a.username)
 
 	// 1. Environment variables (set by credentials file or the caller)
 	if a.username == "" {
-		a.username = os.Getenv("ICLOUD_USERNAME")
+		if v := os.Getenv("ICLOUD_USERNAME"); v != "" {
+			a.username = v
+			logger.Debug("Credentials: username from env ICLOUD_USERNAME")
+		}
 	}
 	if a.password == "" {
-		a.password = os.Getenv("ICLOUD_PASSWORD")
+		if v := os.Getenv("ICLOUD_PASSWORD"); v != "" {
+			a.password = v
+			logger.Debug("Credentials: password from env ICLOUD_PASSWORD")
+		}
 	}
 
 	// 2. Credentials file (~/.config/icloud-reminders/credentials)
@@ -195,18 +206,22 @@ func (a *Authenticator) fullAuth(sessionFile string) (*SessionData, error) {
 		if user, pass, err := loadCredentialsFile(); err == nil {
 			if a.username == "" {
 				a.username = user
+				logger.Debug("Credentials: username from credentials file")
 			}
 			if a.password == "" {
 				a.password = pass
+				logger.Debug("Credentials: password from credentials file")
 			}
 		}
 	}
 
 	// 3. Interactive prompt (fallback)
 	if a.username == "" {
+		logger.Debug("Credentials: username via interactive prompt")
 		a.username = promptUser("Apple ID: ")
 	}
 	if a.password == "" {
+		logger.Debug("Credentials: password via interactive prompt")
 		a.password = promptUserPassword("Password: ")
 	}
 
@@ -235,15 +250,18 @@ func (a *Authenticator) fullAuth(sessionFile string) (*SessionData, error) {
 	if needs2FA {
 		fmt.Fprintln(os.Stderr, "Two-factor authentication required.")
 		code := promptUser("Enter 2FA code: ")
+		logger.Debug("Submitting 2FA code...")
 		if err := a.submitTwoFactor(code); err != nil {
 			return nil, fmt.Errorf("2FA verification: %w", err)
 		}
 		fmt.Fprintln(os.Stderr, "2FA accepted.")
+	} else {
+		logger.Debug("2FA skipped (trust token accepted)")
 	}
 
 	// Step 6: Get trust tokens
 	if err := a.getTrust(); err != nil {
-		log.Printf("Warning: getTrust failed: %v", err)
+		logger.Debugf("getTrust failed (non-fatal): %v", err)
 	}
 
 	// Step 7: Get webservices URL
@@ -261,10 +279,12 @@ func (a *Authenticator) fullAuth(sessionFile string) (*SessionData, error) {
 	a.data.CreatedAt = time.Now().Format(time.RFC3339)
 
 	if err := a.saveSession(sessionFile); err != nil {
-		log.Printf("Warning: failed to save session: %v", err)
+		logger.Infof("Warning: failed to save session: %v", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "✅ Authenticated. CK base: %s\n", ckURL)
+	logger.Infof("Session saved to: %s", sessionFile)
+	logger.Debugf("Trust token present: %v", a.trustToken != "")
 	return &a.data, nil
 }
 
@@ -669,6 +689,15 @@ func (a *Authenticator) extractCookies() []Cookie {
 		}
 	}
 	return result
+}
+
+// hostOf returns just the hostname from a URL string, for concise logging.
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	return u.Host
 }
 
 func unquoteCookieValue(v string) string {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"icloud-reminders/auth"
+	"icloud-reminders/internal/logger"
 )
 
 // APIError represents a non-2xx HTTP error from the CloudKit API.
@@ -122,7 +122,8 @@ func (c *Client) post(path string, body interface{}) (map[string]interface{}, er
 	}
 
 	apiURL := c.ckBase + path
-	log.Printf("[DEBUG] POST %s", apiURL)
+	logger.Debugf("POST %s", apiURL)
+	start := time.Now()
 
 	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(bodyJSON))
 	if err != nil {
@@ -143,6 +144,8 @@ func (c *Client) post(path string, body interface{}) (map[string]interface{}, er
 	if err != nil {
 		return nil, err
 	}
+
+	logger.Debugf("  → %d (%s, %d bytes)", resp.StatusCode, time.Since(start).Round(time.Millisecond), len(respBody))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, &APIError{StatusCode: resp.StatusCode, Body: truncate(string(respBody), 500)}
