@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +15,7 @@ import (
 
 var exportSessionCmd = &cobra.Command{
 	Use:   "export-session [output_file]",
-	Short: "Export session cookies to a tar.gz file",
+	Short: "Export session and cache to a tar.gz file",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		outputFile := "icloud-session.tar.gz"
@@ -24,23 +23,17 @@ var exportSessionCmd = &cobra.Command{
 			outputFile = args[0]
 		}
 
-		// Find session files in config dir
-		entries, err := os.ReadDir(cache.ConfigDir)
-		if err != nil {
-			return fmt.Errorf("read config dir: %w", err)
-		}
-
+		// Export the known session files by path, not by extension scan.
+		candidates := []string{cache.SessionFile, cache.CacheFile}
 		var sessionFiles []string
-		for _, e := range entries {
-			name := e.Name()
-			if strings.HasSuffix(name, ".session") || strings.HasSuffix(name, ".token") {
-				sessionFiles = append(sessionFiles, filepath.Join(cache.ConfigDir, name))
+		for _, p := range candidates {
+			if _, err := os.Stat(p); err == nil {
+				sessionFiles = append(sessionFiles, p)
 			}
 		}
 
 		if len(sessionFiles) == 0 {
-			fmt.Fprintln(os.Stderr, "❌ No session files found. Please login first.")
-			os.Exit(1)
+			return fmt.Errorf("no session files found in %s — please run 'reminders auth' first", cache.ConfigDir)
 		}
 
 		out, err := os.Create(outputFile)
@@ -65,10 +58,10 @@ var exportSessionCmd = &cobra.Command{
 				return err
 			}
 			hdr := &tar.Header{
-				Name:     filepath.Base(path),
-				Size:     info.Size(),
-				Mode:     0600,
-				ModTime:  info.ModTime(),
+				Name:    filepath.Base(path),
+				Size:    info.Size(),
+				Mode:    0600,
+				ModTime: info.ModTime(),
 			}
 			if err := tw.WriteHeader(hdr); err != nil {
 				f.Close()
@@ -81,9 +74,9 @@ var exportSessionCmd = &cobra.Command{
 			f.Close()
 		}
 
-		fmt.Printf("✅ Exported %d session file(s) to: %s\n", len(sessionFiles), outputFile)
+		fmt.Printf("✅ Exported %d file(s) to: %s\n", len(sessionFiles), outputFile)
 		fmt.Println()
-		fmt.Println("⚠️  WARNING: These cookies grant full iCloud access!")
+		fmt.Println("⚠️  WARNING: This archive grants full iCloud access!")
 		fmt.Println("   Only share with trusted parties.")
 		fmt.Println("   Sessions may expire and require re-authentication.")
 		return nil

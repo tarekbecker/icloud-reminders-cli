@@ -16,14 +16,13 @@ import (
 
 var importSessionCmd = &cobra.Command{
 	Use:   "import-session <input_file>",
-	Short: "Import session cookies from a tar.gz file",
+	Short: "Import session and cache from a tar.gz file",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		inputFile := args[0]
 
 		if _, err := os.Stat(inputFile); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "❌ File not found: %s\n", inputFile)
-			os.Exit(1)
+			return fmt.Errorf("file not found: %s", inputFile)
 		}
 
 		if err := os.MkdirAll(cache.ConfigDir, 0700); err != nil {
@@ -53,9 +52,9 @@ var importSessionCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			// Security: only extract .session and .token files, no path traversal
+			// Security: accept only .json files, reject path traversal.
 			name := filepath.Base(hdr.Name)
-			if !strings.HasSuffix(name, ".session") && !strings.HasSuffix(name, ".token") {
+			if !strings.HasSuffix(name, ".json") {
 				continue
 			}
 			if strings.Contains(name, "/") || strings.Contains(name, "..") {
@@ -75,7 +74,11 @@ var importSessionCmd = &cobra.Command{
 			extracted = append(extracted, name)
 		}
 
-		fmt.Printf("✅ Imported %d session file(s):\n", len(extracted))
+		if len(extracted) == 0 {
+			return fmt.Errorf("no .json files found in archive")
+		}
+
+		fmt.Printf("✅ Imported %d file(s):\n", len(extracted))
 		for _, name := range extracted {
 			fmt.Printf("   - %s\n", name)
 		}
