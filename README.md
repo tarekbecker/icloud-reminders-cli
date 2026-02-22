@@ -175,3 +175,30 @@ go/
 | "Missing change tag" | Run `reminders sync` |
 | "List not found" | Check name with `reminders lists` |
 | Binary not found | Run `bash scripts/build.sh` or check your PATH |
+
+## Installation
+
+### Homebrew (macOS/Linux)
+
+The easiest way to install on macOS and Linux:
+
+```bash
+# Add the tap (only needed once)
+brew tap tarekbecker/tap
+
+# Install
+brew install icloud-reminders
+
+# Upgrade to latest version
+brew upgrade icloud-reminders
+```
+
+### Binary Download
+
+Download pre-built binaries for your platform from the [GitHub Releases](https://github.com/tarekbecker/icloud-reminders-cli/releases) page.
+
+Or use the install script:
+
+```bash
+curl -sL https://github.com/tarekbecker/icloud-reminders-cli/releases/latest/download/install.sh | bash
+```

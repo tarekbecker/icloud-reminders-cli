@@ -46,3 +46,24 @@ changelog:
     exclude:
       - '^docs:'
       - '^test:'
+
+# Homebrew Tap configuration
+# Requires GITHUB_TOKEN with repo access to the tap repository
+brews:
+  - name: icloud-reminders
+    repository:
+      owner: tarekbecker
+      name: homebrew-tap
+      token: '{{ .Env.TAP_GITHUB_TOKEN }}'
+    url_template: 'https://github.com/tarekbecker/icloud-reminders-cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}'
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: 'Brew formula update for {{ .ProjectName }} version {{ .Tag }}'
+    homepage: 'https://github.com/tarekbecker/icloud-reminders-cli'
+    description: 'CLI for managing Apple iCloud Reminders via CloudKit API'
+    license: 'MIT'
+    install: |
+      bin.install 'reminders'
+    test: |
+      system '#{bin}/reminders', 'version'
