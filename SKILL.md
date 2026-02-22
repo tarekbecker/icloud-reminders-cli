@@ -76,28 +76,38 @@ reminders list
 reminders list -l "🛒 Einkauf"
 
 # Include completed
-reminders list --all
+reminders list --all          # or: -a
+
+# Show only children of a parent reminder (by name or short ID)
+reminders list --parent "Supermarkt"
+reminders list --parent ABC123DE
 
 # Search by title
 reminders search "milk"
 
-# Show all lists
+# Search including completed
+reminders search "milk" --all   # or: -a
+
+# Show all lists (with active counts and short IDs)
 reminders lists
 
-# Add reminder
+# Add reminder (-l is REQUIRED)
 reminders add "Buy milk" -l "Einkauf"
 
 # Add with due date and priority
-reminders add "Call mom" --due 2026-02-25 --priority high
+reminders add "Call mom" -l "Einkauf" --due 2026-02-25 --priority high
 
 # Add with notes
 reminders add "Buy milk" -l "Einkauf" --notes "Get the organic 2% stuff"
 
-# Add as subtask
-reminders add "Butter" --parent ABC123
+# Add as subtask (-l is REQUIRED even for subtasks)
+reminders add "Butter" -l "🛒 Einkauf" --parent ABC123DE
 
-# Add multiple at once (batch)
+# Add multiple at once (batch; -l is REQUIRED)
 reminders add-batch "Butter" "Käse" "Milch" -l "Einkauf"
+
+# Add multiple as subtasks
+reminders add-batch "Butter" "Käse" -l "Einkauf" --parent ABC123DE
 
 # Complete reminder
 reminders complete abc123
@@ -116,6 +126,9 @@ reminders export-session session.tar.gz
 
 # Import session from export
 reminders import-session session.tar.gz
+
+# Verbose output (any command)
+reminders list -v
 ```
 
 ## Session Management
@@ -154,6 +167,7 @@ IDs (8-char) in parentheses — use for `complete`, `delete`, `--parent`.
 scripts/
 ├── reminders.sh            # Dev wrapper (auto-builds + loads creds)
 ├── build.sh                # Build script
+├── install.sh              # Install script (used by curl | bash one-liner)
 └── reminders               # Compiled Go binary (generated)
 
 go/
@@ -166,10 +180,18 @@ go/
 ├── models/models.go        # Data types
 ├── utils/utils.go          # CRDT title encoding, timestamps
 └── cmd/                    # Cobra CLI commands
-    ├── auth.go             # reminders auth
-    ├── list.go             # reminders list
-    ├── add.go              # reminders add / add-batch
-    └── ...
+    ├── root.go             # Root command; global --verbose / -v flag
+    ├── auth.go             # reminders auth [--force]
+    ├── list.go             # reminders list [-l] [--parent] [--all/-a]
+    ├── lists.go            # reminders lists
+    ├── search.go           # reminders search [--all/-a]
+    ├── add.go              # reminders add / add-batch (both require -l)
+    ├── complete.go         # reminders complete <id>
+    ├── delete.go           # reminders delete <id>
+    ├── json_cmd.go         # reminders json
+    ├── sync.go             # reminders sync
+    ├── export_session.go   # reminders export-session
+    └── import_session.go   # reminders import-session
 ```
 
 ## Troubleshooting
