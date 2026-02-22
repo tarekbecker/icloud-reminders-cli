@@ -100,7 +100,9 @@ func NewFromSession(sess *auth.SessionData) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid ck_base_url %q: %w", sess.CKBaseURL, err)
 	}
-	_ = ckURL
+	if ckURL.Host == "" {
+		return nil, fmt.Errorf("invalid ck_base_url %q: no host", sess.CKBaseURL)
+	}
 
 	// Ensure trailing slash on base
 	base := sess.CKBaseURL
