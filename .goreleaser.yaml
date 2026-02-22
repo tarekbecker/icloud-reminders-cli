@@ -50,7 +50,7 @@ changelog:
 
 # Homebrew Tap configuration
 # Requires GITHUB_TOKEN with repo access to the tap repository
-homebrews:
+brews:
   - name: icloud-reminders
     repository:
       owner: tarekbecker
