@@ -10,6 +10,11 @@ metadata:
       config:
         - ~/.config/icloud-reminders/credentials
         - ~/.config/icloud-reminders/session.json
+    install:
+      - kind: brew
+        tap: tarekbecker/tap
+        formula: icloud-reminders
+        bins: [reminders]
     emoji: "✅"
     homepage: https://github.com/tarekbecker/icloud-reminders-cli
 ---
