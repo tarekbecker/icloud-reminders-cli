@@ -29,7 +29,7 @@ func (r *Reminder) PriorityLabel() string {
 	return ""
 }
 
-// ShortID returns the first 8 characters of the UUID portion of the reminder ID.
+// ShortID returns the full UUID portion of the reminder ID (strips "Reminder/" or "List/" prefix).
 func (r *Reminder) ShortID() string {
 	if r.ID == "" {
 		return ""
@@ -41,9 +41,6 @@ func (r *Reminder) ShortID() string {
 			id = id[i+1:]
 			break
 		}
-	}
-	if len(id) > 8 {
-		return id[:8]
 	}
 	return id
 }

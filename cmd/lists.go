@@ -48,8 +48,5 @@ func shortID(id string) string {
 			break
 		}
 	}
-	if len(id) > 8 {
-		return id[:8]
-	}
 	return id
 }

@@ -167,7 +167,7 @@ The binary handles sessions automatically:
     • Baking paper  (UVW345XY)
 ```
 
-IDs (8-char) in parentheses — use for `complete`, `delete`, `--parent`.
+Full record IDs in parentheses — use for `complete`, `delete`, `--parent`. Prefix matching is supported (pass the first few characters).
 
 ## Cache & Sync
 
