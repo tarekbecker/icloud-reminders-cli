@@ -97,6 +97,12 @@ reminders add "Butter" --parent ABC123
 # Add multiple at once (batch)
 reminders add-batch "Butter" "Käse" "Milch" -l "Einkauf"
 
+# Edit a reminder (update title, due date, notes, or priority)
+reminders edit abc123 --title "New title"
+reminders edit abc123 --due 2026-03-01 --priority high
+reminders edit abc123 --notes "Updated notes"
+reminders edit abc123 --priority none
+
 # Complete reminder
 reminders complete abc123
 

@@ -123,6 +123,12 @@ reminders add-batch "Butter" "Käse" "Milch" -l "Einkauf"
 # Add multiple as subtasks
 reminders add-batch "Butter" "Käse" -l "Einkauf" --parent ABC123DE
 
+# Edit a reminder (update title, due date, notes, or priority)
+reminders edit abc123 --title "New title"
+reminders edit abc123 --due 2026-03-01 --priority high
+reminders edit abc123 --notes "Updated notes"
+reminders edit abc123 --priority none
+
 # Complete reminder
 reminders complete abc123
 
@@ -202,6 +208,7 @@ go/
     ├── add.go              # reminders add / add-batch (both require -l)
     ├── complete.go         # reminders complete <id>
     ├── delete.go           # reminders delete <id>
+    ├── edit.go             # reminders edit <id> [--title] [--due] [--notes] [--priority]
     ├── json_cmd.go         # reminders json
     ├── sync.go             # reminders sync
     ├── export_session.go   # reminders export-session

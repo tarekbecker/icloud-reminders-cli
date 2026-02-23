@@ -73,6 +73,7 @@ func init() {
 		addBatchCmd,
 		completeCmd,
 		deleteCmd,
+		editCmd,
 		jsonCmd,
 		syncCmd,
 		exportSessionCmd,

@@ -305,6 +305,112 @@ func (w *Writer) DeleteReminder(reminderID string) (map[string]interface{}, erro
 	return result, nil
 }
 
+// EditReminder updates one or more fields on an existing reminder.
+// Pass non-empty values only for fields you want to change.
+func (w *Writer) EditReminder(reminderID, title, dueDate, notes, priority string) (map[string]interface{}, error) {
+	ownerID, err := w.ownerID()
+	if err != nil {
+		return errResult(err), nil
+	}
+
+	fullID := w.Sync.FindReminderByID(reminderID)
+	if fullID == "" {
+		return errResult(fmt.Errorf("reminder '%s' not found", reminderID)), nil
+	}
+
+	rd := w.Sync.Cache.Reminders[fullID]
+	if rd == nil || rd.ChangeTag == nil || *rd.ChangeTag == "" {
+		return errResult(fmt.Errorf("missing change tag for '%s' — try running 'sync' first", reminderID)), nil
+	}
+
+	if title == "" && dueDate == "" && notes == "" && priority == "" {
+		return errResult(fmt.Errorf("no changes specified — use --title, --due, --notes, or --priority")), nil
+	}
+
+	fields := map[string]interface{}{}
+
+	if title != "" {
+		encoded, err := utils.EncodeTitle(title)
+		if err != nil {
+			return errResult(fmt.Errorf("encode title: %w", err)), nil
+		}
+		fields["TitleDocument"] = map[string]interface{}{"value": encoded}
+	}
+
+	if dueDate != "" {
+		ts, err := utils.StrToTs(dueDate)
+		if err == nil {
+			fields["DueDate"] = map[string]interface{}{"value": ts}
+		} else {
+			return errResult(fmt.Errorf("invalid due date %q (expected YYYY-MM-DD): %w", dueDate, err)), nil
+		}
+	}
+
+	if notes != "" {
+		encodedNotes, err := utils.EncodeTitle(notes)
+		if err != nil {
+			return errResult(fmt.Errorf("encode notes: %w", err)), nil
+		}
+		fields["NotesDocument"] = map[string]interface{}{"value": encodedNotes}
+	}
+
+	if priority != "" {
+		priorityVal, ok := models.PriorityMap[priority]
+		if !ok {
+			return errResult(fmt.Errorf("invalid priority %q (use: high, medium, low, none)", priority)), nil
+		}
+		fields["Priority"] = map[string]interface{}{"value": priorityVal}
+	}
+
+	op := map[string]interface{}{
+		"operationType": "update",
+		"record": map[string]interface{}{
+			"recordType":      "Reminder",
+			"recordName":      fullID,
+			"recordChangeTag": *rd.ChangeTag,
+			"fields":          fields,
+		},
+	}
+
+	logger.Debugf("edit: updating record %s", fullID)
+	result, err := w.CK.ModifyRecords(ownerID, []map[string]interface{}{op})
+	if err != nil {
+		return errResult(err), nil
+	}
+	if err := checkRecordErrors(result); err != nil {
+		return errResult(err), nil
+	}
+
+	// Update local cache
+	if title != "" {
+		rd.Title = title
+	}
+	if dueDate != "" {
+		rd.Due = &dueDate
+	}
+	if notes != "" {
+		rd.Notes = &notes
+	}
+	if priority != "" {
+		rd.Priority = models.PriorityMap[priority]
+	}
+	// Update change tag from response
+	if records, ok := result["records"].([]interface{}); ok && len(records) > 0 {
+		if rec, ok := records[0].(map[string]interface{}); ok {
+			if ct, ok := rec["recordChangeTag"].(string); ok && ct != "" {
+				rd.ChangeTag = &ct
+			}
+		}
+	}
+	now := time.Now().UnixMilli()
+	rd.ModifiedTS = &now
+	if err := w.Sync.Cache.Save(); err != nil {
+		logger.Warnf("cache save failed: %v", err)
+	}
+	logger.Infof("Edited reminder: %q (%s)", rd.Title, reminderID)
+	return result, nil
+}
+
 // buildCreateOp builds a CloudKit create operation for a new reminder.
 func buildCreateOp(title, listID, parentRef, dueDate string, priority int, notes string) (map[string]interface{}, string, error) {
 	encoded, err := utils.EncodeTitle(title)
