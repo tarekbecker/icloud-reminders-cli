@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"icloud-reminders/internal/reminders"
 )
 
 var (
@@ -12,6 +13,7 @@ var (
 	addPriority string
 	addNotes    string
 	addParent   string
+	addSection  string
 )
 
 var addCmd = &cobra.Command{
@@ -22,6 +24,18 @@ var addCmd = &cobra.Command{
 		title := args[0]
 		if err := syncEngine.Sync(false); err != nil {
 			return err
+		}
+		if addSection != "" {
+			listID := syncEngine.FindListByName(addListName)
+			parentID := ""
+			if addParent != "" {
+				parentID = syncEngine.FindReminderByID(addParent)
+				if parentID == "" {
+					return fmt.Errorf("parent reminder not found")
+				}
+			}
+			result, err := structureService().Create(cmd.Context(), reminders.CreateInput{Title: title, ListID: listID, ParentID: parentID, SectionID: addSection, Due: addDue, Priority: addPriority, Notes: addNotes})
+			return printStructureResult(cmd, result, err)
 		}
 		result, err := w.AddReminder(title, addListName, addDue, addPriority, addNotes, addParent)
 		if err != nil {
@@ -88,6 +102,7 @@ var addBatchCmd = &cobra.Command{
 }
 
 func init() {
+	addCmd.Flags().StringVar(&addSection, "section", "", "Exact native section ID; creates and orders the reminder atomically")
 	addCmd.Flags().StringVarP(&addListName, "list", "l", "", "List name (required)")
 	addCmd.Flags().StringVarP(&addDue, "due", "d", "", "Due date (YYYY-MM-DD)")
 	addCmd.Flags().StringVarP(&addPriority, "priority", "p", "", "Priority (high, medium, low)")

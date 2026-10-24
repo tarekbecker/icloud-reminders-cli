@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"icloud-reminders/internal/reminders"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ var (
 	listFilter       string
 	listParentFilter string
 	listAll          bool
+	listLegend       bool
 )
 
 var listCmd = &cobra.Command{
@@ -22,7 +24,11 @@ var listCmd = &cobra.Command{
 		if err := syncEngine.Sync(false); err != nil {
 			return err
 		}
-		reminders := syncEngine.GetReminders(listAll)
+		itemsInOrder := reminders.OrderReminders(syncEngine, syncEngine.GetReminders(listAll))
+		reminders := itemsInOrder
+		if listLegend {
+			printReminderLegend()
+		}
 
 		// --parent: show only children of a named parent reminder
 		if listParentFilter != "" {
@@ -39,9 +45,8 @@ var listCmd = &cobra.Command{
 			}
 			if r.ParentRef != nil && *r.ParentRef != "" {
 				childrenByParent[*r.ParentRef] = append(childrenByParent[*r.ParentRef], r)
-			} else {
-				byList[r.ListName] = append(byList[r.ListName], r)
 			}
+			byList[r.ListRefValue()] = append(byList[r.ListRefValue()], r)
 		}
 
 		active := 0
@@ -61,24 +66,27 @@ var listCmd = &cobra.Command{
 		for _, listName := range listNames {
 			items := byList[listName]
 			total := len(items)
-			for _, r := range items {
-				total += len(childrenByParent[r.ID])
+			displayName := listName
+			if len(items) > 0 {
+				displayName = items[0].ListName
 			}
-			fmt.Printf("\n📋 %s (%d)\n", listName, total)
+			fmt.Printf("\n📋 %s (%d)\n", displayName, total)
 
-			sort.Slice(items, func(i, j int) bool {
-				ti, tj := int64(0), int64(0)
-				if items[i].ModifiedTS != nil {
-					ti = *items[i].ModifiedTS
-				}
-				if items[j].ModifiedTS != nil {
-					tj = *items[j].ModifiedTS
-				}
-				return ti > tj
-			})
-
+			seen := map[string]bool{}
+			section := ""
 			for _, r := range items {
-				printReminder(r, 2, childrenByParent)
+				if seen[r.ID] {
+					continue
+				}
+				if r.SectionName != section {
+					section = r.SectionName
+					if section != "" {
+						fmt.Printf("\n  § %s\n", section)
+					} else {
+						fmt.Println("\n  § No section")
+					}
+				}
+				printReminderSeen(r, 2, childrenByParent, seen)
 			}
 		}
 		return nil
@@ -122,15 +130,11 @@ func runListByParent(reminders []*models.Reminder, parentFilter string) error {
 		}
 	}
 
-	sort.Slice(children, func(i, j int) bool {
-		ti, tj := int64(0), int64(0)
-		if children[i].ModifiedTS != nil {
-			ti = *children[i].ModifiedTS
+	sort.SliceStable(children, func(i, j int) bool {
+		if children[i].SortIndex != children[j].SortIndex {
+			return children[i].SortIndex < children[j].SortIndex
 		}
-		if children[j].ModifiedTS != nil {
-			tj = *children[j].ModifiedTS
-		}
-		return ti > tj
+		return children[i].ID < children[j].ID
 	})
 
 	fmt.Printf("\n📋 %s (%d items)\n", parentTitle, len(children))
@@ -153,6 +157,14 @@ func runListByParent(reminders []*models.Reminder, parentFilter string) error {
 }
 
 func printReminder(r *models.Reminder, indent int, childrenByParent map[string][]*models.Reminder) {
+	printReminderSeen(r, indent, childrenByParent, map[string]bool{})
+}
+
+func printReminderSeen(r *models.Reminder, indent int, childrenByParent map[string][]*models.Reminder, seen map[string]bool) {
+	if seen[r.ID] {
+		return
+	}
+	seen[r.ID] = true
 	prefix := spaces(indent)
 	status := "•"
 	if r.Completed {
@@ -170,18 +182,15 @@ func printReminder(r *models.Reminder, indent int, childrenByParent map[string][
 
 	// Print children recursively
 	children := childrenByParent[r.ID]
-	sort.Slice(children, func(i, j int) bool {
-		ti, tj := int64(0), int64(0)
-		if children[i].ModifiedTS != nil {
-			ti = *children[i].ModifiedTS
+	sort.SliceStable(children, func(i, j int) bool {
+		if children[i].SortIndex != children[j].SortIndex {
+			return children[i].SortIndex < children[j].SortIndex
 		}
-		if children[j].ModifiedTS != nil {
-			tj = *children[j].ModifiedTS
-		}
-		return ti > tj
+		return children[i].ID < children[j].ID
 	})
+
 	for _, child := range children {
-		printReminder(child, indent+2, childrenByParent)
+		printReminderSeen(child, indent+2, childrenByParent, seen)
 	}
 }
 
@@ -205,7 +214,14 @@ func toLowerStr(s string) string {
 	return string(result)
 }
 
+func printReminderLegend() {
+	fmt.Println("Legend: • pending · ✓ completed · indentation/↳ subtask · § section heading")
+	fmt.Println("Priority: ! low (9) · !! medium (5) · !!! high (1) · 0 none")
+	fmt.Println("≡ is a drag handle for manual order, not priority; use move/reorder with IDs. Symbols are display metadata, not title text.")
+}
+
 func init() {
+	listCmd.Flags().BoolVar(&listLegend, "legend", false, "Explain status, section, priority and ordering symbols")
 	listCmd.Flags().StringVarP(&listFilter, "list", "l", "", "Filter by list name")
 	listCmd.Flags().StringVar(&listParentFilter, "parent", "", "Show only children of this parent reminder (name or ID)")
 	listCmd.Flags().BoolVarP(&listAll, "all", "a", false, "Include completed reminders")

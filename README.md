@@ -5,6 +5,10 @@ description: Manage Apple iCloud Reminders via CloudKit API. Use for listing, ad
 
 # iCloud Reminders (Go)
 
+This fork publishes `ghcr.io/tooker/icloud-reminders-cli:latest` from its
+`feat/standalone-mcp-server` branch for AMD64 and ARM64. See
+[Docker images](docs/docker-images.md) for setup and updates.
+
 Access and manage Apple iCloud Reminders via CloudKit API. Full CRUD with hierarchical subtask support.
 
 **Pure Go — no Python or pyicloud required.** Authentication, 2FA, session management and CloudKit API calls are all implemented natively in Go.
@@ -39,11 +43,11 @@ Download manually for your platform from [GitHub Releases](https://github.com/ta
 
 ### Build from Source
 
-Requires Go 1.22+:
+Requires Go 1.25+:
 
 ```bash
 bash scripts/build.sh
-sudo cp go/reminders /usr/local/bin/
+sudo cp scripts/reminders /usr/local/bin/
 ```
 
 ## Setup
@@ -60,12 +64,29 @@ sudo cp go/reminders /usr/local/bin/
 
 2. **Session file** (`~/.config/icloud-reminders/session.json`) is created automatically and reused. Run `reminders auth` again when the session expires.
 
+## Standalone MCP server
+
+After authenticating, run `reminders serve` to expose a standalone Streamable
+HTTP MCP endpoint at `http://127.0.0.1:8081/mcp`, or use
+`reminders serve --transport stdio` for process-based clients. The same Go
+binary supports list/read/create/update/complete/delete tools and assignments
+to accepted collaborators in shared lists, with persistent
+sessions, exact IDs, serialized account operations and explicit deletion
+confirmation. Python and a reverse proxy are not required.
+
+Docker Compose runs the server as a non-root user with a persistent private
+volume and a loopback-only port. See the [MCP setup and Docker guide](docs/mcp.md)
+for authentication, tools, access controls and verification.
+
 ## Commands
 
 ```bash
 # First-time setup / force re-auth
 reminders auth
 reminders auth --force
+
+# Request temporary web access with Advanced Data Protection enabled
+reminders auth --approve-web-access
 
 # List all active reminders (hierarchical)
 reminders list
@@ -123,6 +144,20 @@ reminders import-session session.tar.gz
 ```
 
 ## Session Management
+
+The administrative `drive-export` command reuses this login for the paired
+iCloud Drive MCP reader. Stop the Go server first, then run:
+
+```bash
+reminders drive-export --output /private/drive/session.json
+```
+
+It discovers Drive/document endpoints with the saved token and verifies root
+access before exporting a password-free session with mode 0600. It never
+starts interactive signin, 2FA or a device notification. If Drive needs its
+own service approval, explicitly add `--approve-web-access` and approve on
+the trusted device. The export remains separate from the master Go session;
+its account-bound reference key and cookie scope survive repeated exports.
 
 The binary handles sessions automatically:
 

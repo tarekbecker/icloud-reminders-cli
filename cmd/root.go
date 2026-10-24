@@ -3,7 +3,10 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 
 	"icloud-reminders/internal/auth"
@@ -16,6 +19,21 @@ import (
 
 // verbosity is incremented once per -v flag: -v=1 (info), -vv=2 (debug).
 var verbosity int
+var dataDirectory string
+var commandLock *flock.Flock
+
+// Execute runs a single CLI invocation and releases its account lease on
+// both success and failure. The lease also protects administrative CLI writes
+// from a running server using the same session/cache directory.
+func Execute() error {
+	defer func() {
+		if commandLock != nil {
+			_ = commandLock.Close()
+			commandLock = nil
+		}
+	}()
+	return RootCmd.Execute()
+}
 
 // shared per-invocation state (set in PersistentPreRunE)
 var (
@@ -29,11 +47,28 @@ var RootCmd = &cobra.Command{
 	Use:   "reminders",
 	Short: "iCloud Reminders CLI (CloudKit)",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if dataDirectory != "" {
+			cache.SetDirectory(dataDirectory)
+		}
 		logger.SetLevel(verbosity)
+		if cmd.Name() == "version" {
+			return nil
+		}
+		if err := os.MkdirAll(cache.ConfigDir, 0700); err != nil {
+			return fmt.Errorf("cannot create data directory")
+		}
+		commandLock = flock.New(filepath.Join(cache.ConfigDir, ".lock"))
+		locked, err := commandLock.TryLock()
+		if err != nil {
+			return fmt.Errorf("cannot lock data directory")
+		}
+		if !locked {
+			return fmt.Errorf("data directory is in use; stop the running server before administrative CLI operations")
+		}
 
 		// Commands that handle their own auth (or none)
 		switch cmd.Name() {
-		case "auth", "export-session", "import-session":
+		case "auth", "export-session", "import-session", "drive-export", "serve":
 			return nil
 		}
 
@@ -61,6 +96,11 @@ func loadSession(forceReauth bool) (*auth.SessionData, error) {
 }
 
 func init() {
+	defaultDirectory := os.Getenv("ICLOUD_REMINDERS_DATA_DIR")
+	if defaultDirectory == "" {
+		defaultDirectory = cache.ConfigDir
+	}
+	RootCmd.PersistentFlags().StringVar(&dataDirectory, "data-dir", defaultDirectory, "Directory containing private session and cache files")
 	// CountP increments verbosity each time -v is passed: -v=1, -vv=2
 	RootCmd.PersistentFlags().CountVarP(&verbosity, "verbose", "v", "Verbosity: -v info, -vv debug")
 
@@ -77,6 +117,8 @@ func init() {
 		jsonCmd,
 		syncCmd,
 		exportSessionCmd,
+		driveExportCmd,
 		importSessionCmd,
+		serveCmd,
 	)
 }

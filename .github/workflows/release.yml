@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   release:
+    # Fork releases use the verified paired build artifacts. This inherited job
+    # also updates the upstream author's Homebrew tap and must only run there.
+    if: github.repository == 'tarekbecker/icloud-reminders-cli'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +20,7 @@ jobs:
           fetch-depth: 0  # Required for GoReleaser to generate changelog
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser

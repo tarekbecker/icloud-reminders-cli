@@ -8,7 +8,7 @@ import (
 )
 
 // version is set at build time via ldflags (see .goreleaser.yaml)
-var version = "dev"
+var version = "1.1.0"
 
 // SetVersion allows main.go to inject the build-time version
 func SetVersion(v string) {

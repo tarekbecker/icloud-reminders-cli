@@ -3,6 +3,7 @@ package cloudkit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"icloud-reminders/internal/auth"
 	"icloud-reminders/internal/logger"
+	"icloud-reminders/pkg/models"
 )
 
 // APIError represents a non-2xx HTTP error from the CloudKit API.
@@ -40,8 +42,10 @@ const (
 
 // Client manages an authenticated CloudKit HTTP session.
 type Client struct {
+	ctx    context.Context
 	http   *http.Client
 	ckBase string
+	scope  models.RecordScope
 }
 
 // NewFromSession creates a CloudKit client from auth session data.
@@ -56,45 +60,7 @@ func NewFromSession(sess *auth.SessionData) (*Client, error) {
 		return nil, err
 	}
 
-	// Build http.Cookie slice with unquoted values.
-	// Apple cookies use RFC 2109 quoted-string values (e.g. "v=1:t=...").
-	// Go's strict net/http parser rejects raw '"' — strip outer quotes here.
-	var httpCookies []*http.Cookie
-	for _, c := range sess.Cookies {
-		exp := time.Time{}
-		if c.Expires > 0 {
-			exp = time.Unix(c.Expires, 0)
-		}
-		httpCookies = append(httpCookies, &http.Cookie{
-			Name:    c.Name,
-			Value:   unquoteCookie(c.Value),
-			Domain:  c.Domain,
-			Path:    c.Path,
-			Expires: exp,
-			Secure:  c.Secure,
-		})
-	}
-
-	// Set cookies against all iCloud-related hosts so Go's jar forwards
-	// them to any *.icloud.com subdomain (setup, ckdatabasews, etc.)
-	setURLs := []string{
-		"https://www.icloud.com",
-		"https://setup.icloud.com",
-		"https://idmsa.apple.com",
-		"https://appleid.apple.com",
-		"https://www.apple.com",
-		sess.CKBaseURL,
-	}
-	for _, rawURL := range setURLs {
-		if rawURL == "" {
-			continue
-		}
-		u, err := url.Parse(rawURL)
-		if err != nil {
-			continue
-		}
-		jar.SetCookies(u, httpCookies)
-	}
+	auth.RestoreCookies(jar, sess.Cookies, sess.CKBaseURL)
 
 	ckURL, err := url.Parse(sess.CKBaseURL)
 	if err != nil {
@@ -111,9 +77,17 @@ func NewFromSession(sess *auth.SessionData) (*Client, error) {
 	}
 
 	return &Client{
-		http:   &http.Client{Jar: jar},
+		ctx:    context.Background(),
+		http:   &http.Client{Jar: jar, Timeout: 30 * time.Second},
 		ckBase: base,
 	}, nil
+}
+
+// WithContext returns a client whose requests observe the tool's deadline.
+func (c *Client) WithContext(ctx context.Context) *Client {
+	copy := *c
+	copy.ctx = ctx
+	return &copy
 }
 
 // post makes a JSON POST request to the CloudKit API.
@@ -127,7 +101,7 @@ func (c *Client) post(path string, body interface{}) (map[string]interface{}, er
 	logger.Debugf("POST %s", apiURL)
 	start := time.Now()
 
-	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(bodyJSON))
+	req, err := http.NewRequestWithContext(c.ctx, "POST", apiURL, bytes.NewReader(bodyJSON))
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +130,9 @@ func (c *Client) post(path string, body interface{}) (map[string]interface{}, er
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("JSON parse error: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("empty CloudKit response")
 	}
 	return result, nil
 }
@@ -210,28 +187,35 @@ type ZoneID struct {
 func (c *Client) ChangesZone(ownerID string, syncToken string) (map[string]interface{}, error) {
 	spec := ZoneChangesSpec{
 		ZoneID:      ZoneID{ZoneName: Zone, OwnerRecordName: ownerID},
-		DesiredKeys: []string{"TitleDocument", "NotesDocument", "Name", "Completed", "CompletionDate", "DueDate", "List", "Deleted", "Priority", "ParentReminder"},
+		DesiredKeys: []string{"TitleDocument", "NotesDocument", "Name", "Completed", "CompletionDate", "DueDate", "List", "Deleted", "Priority", "ParentReminder", "AssignmentIDs", "Reminder", "Status", "EncryptedAssigneeIdentifier", "EncryptedOriginatorIdentifier", "AssignedDate", "OwningReminderIdentifier", "DisplayName", "CanonicalName", "ReminderIDs", "ReminderIDsAsset", "MembershipsOfRemindersInSectionsAsData", "MembershipsOfRemindersInSectionsChecksum", "SectionIDsOrderingAsData", "ResolutionTokenMap"},
+	}
+	if c.scope.ZoneName != "" {
+		spec.ZoneID = ZoneID{ZoneName: c.scope.ZoneName, OwnerRecordName: c.scope.OwnerRecordName}
 	}
 	if syncToken != "" {
 		spec.SyncToken = syncToken
 	}
-	return c.post("database/1/"+Container+"/production/private/changes/zone",
+	return c.post(c.databasePath("changes/zone"),
 		ChangesZoneRequest{Zones: []ZoneChangesSpec{spec}})
 }
 
 // ModifyRecords creates, updates, or deletes CloudKit records.
 func (c *Client) ModifyRecords(ownerID string, operations []map[string]interface{}) (map[string]interface{}, error) {
+	zone := ZoneID{ZoneName: Zone, OwnerRecordName: ownerID}
+	if c.scope.ZoneName != "" {
+		zone = ZoneID{ZoneName: c.scope.ZoneName, OwnerRecordName: c.scope.OwnerRecordName}
+	}
 	payload := map[string]interface{}{
-		"zoneID": map[string]interface{}{
-			"zoneName":        Zone,
-			"ownerRecordName": ownerID,
-		},
+		"zoneID":     zone,
 		"operations": operations,
 		"atomic":     true,
 	}
-	result, err := c.post("database/1/"+Container+"/production/private/records/modify", payload)
+	result, err := c.post(c.databasePath("records/modify"), payload)
 	if err != nil {
-		return map[string]interface{}{"error": err.Error()}, nil
+		return nil, unknownWrite(err)
+	}
+	if err := confirmWrite(result, operations); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

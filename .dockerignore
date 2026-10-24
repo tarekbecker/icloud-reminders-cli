@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+config
+**/session.json
+**/credentials
+**/ck_cache.json
+dist
+build
+scripts/reminders
+*.test
+*.out

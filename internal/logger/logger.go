@@ -65,10 +65,16 @@ func Timer(name string) func() {
 
 // Warn always prints to stderr regardless of level.
 func Warn(msg string) {
+	if level < 0 {
+		return
+	}
 	fmt.Fprintln(os.Stderr, "⚠️  "+msg)
 }
 
 // Warnf logs a formatted warning to stderr regardless of level.
 func Warnf(format string, args ...interface{}) {
+	if level < 0 {
+		return
+	}
 	fmt.Fprintf(os.Stderr, "⚠️  "+format+"\n", args...)
 }

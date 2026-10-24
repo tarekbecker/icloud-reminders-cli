@@ -1,0 +1,34 @@
+services:
+  reminders:
+    build: .
+    image: ghcr.io/tooker/icloud-reminders-cli:latest
+    # The write-capable endpoint stays local; other Compose services can use
+    # http://reminders:8080/mcp without publishing another port.
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - reminders-data:/data
+    environment:
+      REMINDERS_MCP_TOKEN: ${REMINDERS_MCP_TOKEN:-}
+    init: true
+    stop_grace_period: 15s
+    restart: unless-stopped
+
+  # Explicitly invoked integration test; never part of normal service startup.
+  smoke:
+    profiles: ["test"]
+    build:
+      context: .
+      target: build
+    entrypoint: ["go"]
+    command: ["test", "-v", "./internal/mcpserver", "-run", "^TestLiveRemindersReadOnly$", "-count=1", "-timeout", "10m"]
+    volumes:
+      - reminders-data:/data:ro
+    environment:
+      ICLOUD_REMINDERS_DATA_DIR: /data
+      REMINDERS_LIVE_TEST: "1"
+      REMINDERS_LIVE_MIN_ACTIVE: ${REMINDERS_LIVE_MIN_ACTIVE:-0}
+    restart: "no"
+
+volumes:
+  reminders-data:
